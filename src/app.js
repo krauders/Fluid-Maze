@@ -224,8 +224,8 @@ function drawMaze(mazeModel, root) {
 					cell.style.width = '20px'; // Set a fixed width
 					cell.style.height = '20px'; // Set a fixed height
 					cell.style.border = 'none'; // Remove the border
-					// let text = cell.querySelector('span') || document.createElement('span'); 
-					// text.textContent = '';
+					let text = cell.querySelector('span') || document.createElement('span'); 
+					text.textContent = '';
 				}
             } else if (player && i === player.y && j === player.x) {
                 cell.style.backgroundColor = playerColor;
@@ -234,22 +234,22 @@ function drawMaze(mazeModel, root) {
                 cell.style.height = '14px'; // Adjust the height to account for the border
                 cell.style.position = 'relative'; // Make the cell a relative container
 
-                // let text = cell.querySelector('span') || document.createElement('span'); // Create a new span element for the text
-                // text.textContent = initials; // Set the text
-                // text.style.position = 'absolute'; // Position the text absolutely
-                // text.style.top = '50%'; // Center the text vertically
-                // text.style.left = '50%'; // Center the text horizontally
-                // text.style.transform = 'translate(-50%, -50%)'; // Ensure the text is centered
-                // text.style.color = 'black'; // Set the text color to black
+                let text = cell.querySelector('span') || document.createElement('span'); // Create a new span element for the text
+                text.textContent = initials; // Set the text
+                text.style.position = 'absolute'; // Position the text absolutely
+                text.style.top = '50%'; // Center the text vertically
+                text.style.left = '50%'; // Center the text horizontally
+                text.style.transform = 'translate(-50%, -50%)'; // Ensure the text is centered
+                text.style.color = 'black'; // Set the text color to black
 
-                // cell.appendChild(text); // Add the text to the cell
+                cell.appendChild(text); // Add the text to the cell
             } else {
                 cell.style.backgroundColor = 'white'
 				cell.style.width = '20px'; // Set a fixed width
 				cell.style.height = '20px'; // Set a fixed height
 				cell.style.border = 'none'; // Remove the border
-				// let text = cell.querySelector('span') || document.createElement('span'); 
-				// text.textContent = '';
+				let text = cell.querySelector('span') || document.createElement('span'); 
+				text.textContent = '';
             }
         }
     }
