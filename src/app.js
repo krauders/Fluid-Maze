@@ -3,10 +3,10 @@
  * Licensed under the MIT License.
  */
 
-import { SharedTree, TreeConfiguration, SchemaFactory, Tree } from "fluid-framework";
+import { SharedTree, SchemaFactory, Tree, TreeViewConfiguration } from "fluid-framework";
 import { TinyliciousClient } from "@fluidframework/tinylicious-client";
 
-// const clientProps = { connection: { port: 80, domain: "0e95-20-125-16-45.ngrok-free.app" } };
+// const clientProps = { connection: { port: 443, domain: "https://effective-goldfish-5wv9gjxr5qxh49x6-8080.app.github.dev" } };
 const client = new TinyliciousClient();
 const containerSchema = {
 	initialObjects: { mazeTree: SharedTree },
@@ -39,8 +39,8 @@ class Maze extends sf.object("Maze", {
 
 // Maze configuration
 // The rows and columns actually get multiplied by 2x+1 to account for the walls
-const mazeRows = 15;
-const mazeColumns = 15;
+const mazeRows = 10;
+const mazeColumns = 10;
 // player's position
 let player;
 
@@ -50,12 +50,9 @@ let initialMaze = {
 };
 
 // Here we define the tree schema, which has a single Maze object.
-// We'll call schematize() on the SharedTree using this schema, which will give us a tree view to work with.
-const treeConfiguration = new TreeConfiguration(
-	Maze,
-	() =>
-		new Maze(initialMaze),
-);
+const treeConfiguration = new TreeViewConfiguration({
+	schema: Maze,
+});
 
 let globalMazeRef;
 
@@ -84,11 +81,11 @@ const loadExistingMaze = async (id) => {
 	const { container } = await client.getContainer(id, containerSchema).catch((error) => {
 		console.error("Error getting container: ", error);
 		// redirect to root path
-		location.href = "/";
+		// location.href = "/";
 	});
 	globalContainer = container;
-	console.log("Schematizing maze");
-	const mazeModel = container.initialObjects.mazeTree.schematize(treeConfiguration).root;
+	const sharedTree = container.initialObjects.mazeTree.viewWith(treeConfiguration);
+	const mazeModel = sharedTree.root;
 	globalMazeRef = mazeModel;
 	console.log("Loaded maze: ", mazeModel.playerList);
 	console.log("Player position: ", player);
@@ -163,27 +160,25 @@ const generateMaze = async(rows, columns) => {
 		}
 	}
 
-
-	const { container } = await client.createContainer(containerSchema);
+	const { container } = await client.createContainer(containerSchema, "2");
 	globalContainer = container;
 	initialMaze.rows = maze;
 	playerNumber = 1;
 	initials = prompt("Please enter your 2-3 letter initials");
 	player = getRandomPosition(initialMaze);
 	initialMaze.playerList.push(player);
-	const mazeModel = container.initialObjects.mazeTree.schematize(treeConfiguration).root;
-	player = {...mazeModel.playerList.find(p => p.number === playerNumber)};
-	// mazeModel.rows = maze;
-	globalMazeRef = mazeModel;
+	const sharedTree = container.initialObjects.mazeTree.viewWith(treeConfiguration);
+	sharedTree.initialize(new Maze(initialMaze));
 
 	const id = await container.attach();
+
+	const mazeModel = sharedTree.root;
+	player = {...mazeModel.playerList.find(p => p.number === playerNumber)};
+	globalMazeRef = sharedTree.root;
+	window.maze = sharedTree.root;
+
 	drawMaze(mazeModel, root);
 	Tree.on(mazeModel.playerList, "treeChanged", drawMaze);
-	// Tree.on(player, "nodeChanged", () => {
-	// 	updatePlayerPosition(player.x, player.y, newX, newY);
-	// });
-	// console print serialized view of the whole game state to send to chatgpt
-	// console.log("Maze generated: ", JSON.stringify(mazeModel));
 	return id;
     // return maze;
 }
@@ -198,16 +193,13 @@ function getRandomPosition(mazeModel) {
 	return { number, x, y, initials, uuid: Math.random().toString(36)};
 }
 
+let initialMazeDrawn = false;
+
 // Draw the maze
 function drawMaze(mazeModel, root) {
-	// console.log("Drawing maze");
-	// console.log("Player position x:", player && player.x, "y:", player && player.y);
-	// console.log("Player list serialized: ", JSON.stringify(globalMazeRef.playerList));
-	// console.log("Container connection state:" + globalContainer.connectionState);
-	// if mazemodel is undefined, use global maze ref
-	if (!mazeModel) {
+	// Apparently the Tree.on() method passes a new argument now that is not the tree itself
 		mazeModel = globalMazeRef;
-	}
+	// }
 	// If current player was removed from the playerlist, it means you lost the game. Remove from the maze.
 	if (player && !mazeModel.playerList.find(p => p.number === player.number)) {
 		player = null;
@@ -227,12 +219,14 @@ function drawMaze(mazeModel, root) {
             cell.style.width = '20px'; // Set a fixed width
             cell.style.height = '20px'; // Set a fixed height
             if (mazeModel.rows[i][j] === 0) {
-                cell.style.backgroundColor = 'black';
-				cell.style.width = '20px'; // Set a fixed width
-				cell.style.height = '20px'; // Set a fixed height
-				cell.style.border = 'none'; // Remove the border
-				let text = cell.querySelector('span') || document.createElement('span'); 
-				text.textContent = '';
+				if(!initialMazeDrawn) {
+					cell.style.backgroundColor = 'black';
+					cell.style.width = '20px'; // Set a fixed width
+					cell.style.height = '20px'; // Set a fixed height
+					cell.style.border = 'none'; // Remove the border
+					// let text = cell.querySelector('span') || document.createElement('span'); 
+					// text.textContent = '';
+				}
             } else if (player && i === player.y && j === player.x) {
                 cell.style.backgroundColor = playerColor;
                 cell.style.border = '3px solid black'; // Add a dark border
@@ -240,22 +234,22 @@ function drawMaze(mazeModel, root) {
                 cell.style.height = '14px'; // Adjust the height to account for the border
                 cell.style.position = 'relative'; // Make the cell a relative container
 
-                let text = cell.querySelector('span') || document.createElement('span'); // Create a new span element for the text
-                text.textContent = initials; // Set the text
-                text.style.position = 'absolute'; // Position the text absolutely
-                text.style.top = '50%'; // Center the text vertically
-                text.style.left = '50%'; // Center the text horizontally
-                text.style.transform = 'translate(-50%, -50%)'; // Ensure the text is centered
-                text.style.color = 'black'; // Set the text color to black
+                // let text = cell.querySelector('span') || document.createElement('span'); // Create a new span element for the text
+                // text.textContent = initials; // Set the text
+                // text.style.position = 'absolute'; // Position the text absolutely
+                // text.style.top = '50%'; // Center the text vertically
+                // text.style.left = '50%'; // Center the text horizontally
+                // text.style.transform = 'translate(-50%, -50%)'; // Ensure the text is centered
+                // text.style.color = 'black'; // Set the text color to black
 
-                cell.appendChild(text); // Add the text to the cell
+                // cell.appendChild(text); // Add the text to the cell
             } else {
                 cell.style.backgroundColor = 'white'
 				cell.style.width = '20px'; // Set a fixed width
 				cell.style.height = '20px'; // Set a fixed height
 				cell.style.border = 'none'; // Remove the border
-				let text = cell.querySelector('span') || document.createElement('span'); 
-				text.textContent = '';
+				// let text = cell.querySelector('span') || document.createElement('span'); 
+				// text.textContent = '';
             }
         }
     }
@@ -279,7 +273,7 @@ function drawMaze(mazeModel, root) {
 
 		cell.appendChild(text); // Add the text to the cell
 	});
-	// console.log("Maze drawn");
+	initialMazeDrawn = true;
 }
 
 // Generate a random bold color
@@ -399,10 +393,6 @@ const updateAiPlayer = () => {
 	}
 };
 
-//"```json
-//{\"move\": \"ArrowLeft\"}
-//"
-
 start().then(() => {
 	// Handle keyboard events
 	document.addEventListener('keydown', function(e) {
@@ -462,15 +452,8 @@ start().then(() => {
 							alert("Player " + winningPlayer.number + " with initials " + winningPlayer.initials + " has won the game!");
 						}
 					}
-					// updatePlayerPosition(player.x, player.y, newX, newY); // Update only the player's position
 				}
 			} else {
-				// updatePlayerPosition(player.x, player.y, newX, newY); // Update only the player's position
-				// console.log("Moving from", player.x, player.y, "to", newX, newY);
-				// Tree.runTransaction(player, (player) => {
-				// 	player.x = newX;
-				// 	player.y = newY;
-				// });
 				player.x = newX;
 				player.y = newY;
 				Tree.runTransaction(globalMazeRef.playerList, (playerList) => {
@@ -487,35 +470,3 @@ start().then(() => {
 		}
 	});
 }).catch((error) => console.error(error));
-
-function updatePlayerPosition(oldX, oldY, newX, newY) {
-	console.log("Updating player position");
-    let table = document.querySelector('table');
-    let oldCell = table.rows[oldY].cells[oldX];
-    let cell = table.rows[newY].cells[newX];
-
-    // Reset the old cell
-	oldCell.style.backgroundColor = 'white'
-	oldCell.style.width = '20px'; // Set a fixed width
-	oldCell.style.height = '20px'; // Set a fixed height
-	oldCell.style.border = 'none'; // Remove the border
-	let oldCellText = oldCell.querySelector('span') || document.createElement('span'); 
-	oldCellText.textContent = '';
-
-    // Update the new cell
-	cell.style.backgroundColor = playerColor;
-	cell.style.border = '3px solid black'; // Add a dark border
-	cell.style.width = '14px'; // Adjust the width to account for the border
-	cell.style.height = '14px'; // Adjust the height to account for the border
-	cell.style.position = 'relative'; // Make the cell a relative container
-
-	let text = cell.querySelector('span') || document.createElement('span'); // Create a new span element for the text
-	text.textContent = initials; // Set the text
-	text.style.position = 'absolute'; // Position the text absolutely
-	text.style.top = '50%'; // Center the text vertically
-	text.style.left = '50%'; // Center the text horizontally
-	text.style.transform = 'translate(-50%, -50%)'; // Ensure the text is centered
-	text.style.color = 'black'; // Set the text color to black
-
-	cell.appendChild(text); // Add the text to the cell
-}

@@ -23,7 +23,7 @@ module.exports = (env) => {
 		},
 		plugins,
 		devServer: {
-			open: false,
+			open: true
 		},
 	};
 };
