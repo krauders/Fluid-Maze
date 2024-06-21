@@ -6,8 +6,8 @@
 import { SharedTree, SchemaFactory, Tree, TreeViewConfiguration } from "fluid-framework";
 import { TinyliciousClient } from "@fluidframework/tinylicious-client";
 
-// const clientProps = { connection: { port: 443, domain: "https://effective-goldfish-5wv9gjxr5qxh49x6-8080.app.github.dev" } };
-const client = new TinyliciousClient();
+const clientProps = { connection: { port: 443, domain: "https://effective-goldfish-5wv9gjxr5qxh49x6-7070.app.github.dev" } };
+const client = new TinyliciousClient(clientProps);
 const containerSchema = {
 	initialObjects: { mazeTree: SharedTree },
 };
@@ -39,8 +39,8 @@ class Maze extends sf.object("Maze", {
 
 // Maze configuration
 // The rows and columns actually get multiplied by 2x+1 to account for the walls
-const mazeRows = 10;
-const mazeColumns = 10;
+const mazeRows = 20;
+const mazeColumns = 20;
 // player's position
 let player;
 
@@ -65,9 +65,9 @@ let playerNumber;
 // pop up a modal to ask the user to enter their 2-3 letter initials
 let initials;
 
-// method to check if the connection state is 2 (connected) and if not, wait for 5 seconds and check again
+// method to check if the connection state is 2 or 3 (connected?) and if not, wait for 5 seconds and check again
 const checkConnectionState = async (container) => {
-	if (container.connectionState !== 2) {
+	if (container.connectionState !== 3 && container.connectionState !== 2) {
 		console.log("Container connection state:" + container.connectionState);
 		await new Promise((resolve) => setTimeout(resolve, 5000));
 		await checkConnectionState(container);
