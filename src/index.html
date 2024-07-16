@@ -12,28 +12,30 @@
 		/>
 		<!-- Inline CSS -->
 		<style>
-			#game-over-screen {
-				display: none;
-				position: fixed;
-				top: 0;
-				left: 0;
-				width: 100%;
+			body {
+				display: flex;
+				justify-content: center;
+				align-items: center;
+				margin: 0;
 				height: 100%;
-				z-index: 9999;
-				animation: game-over-animation 2s linear;
+				background-color: #f0f0f0;
 			}
-
-			@keyframes game-over-animation {
-				0% { background: red; }
-				50% { background: yellow; }
-				100% { background: red; }
+		
+			#content {
+				display: flex;
+				flex-direction: column; /* This will stack child divs vertically */
+				justify-content: center;
+				align-items: center;
+				width: 50%;
+				min-height: 50%;
+				background-color: #e0e0e0;
+				margin: auto;
 			}
 		</style>
-		<title>Fluid Maze</title>
+		<title>Fluid Doc</title>
 	</head>
-	<body style="margin: 0; height: 100%">
-		<!--<div id="content" style="min-height: 100%"></div>-->
-		<!-- Add this to your HTML -->
-		<div id="game-over-screen"></div>
+	<body style="margin: 50px; height: 100%">
+		<br/><br/>
+		<div id="content" style="padding: 50px; min-height: 100%"></div>
 	</body>
 </html>
