@@ -8,7 +8,10 @@ import { TinyliciousClient } from "@fluidframework/tinylicious-client";
 import { SharedTree, SchemaFactory, TreeViewConfiguration } from "fluid-framework";
 
 // Number of iterations to run for each file when doing a full performance test
-const FULL_TEST_ITERATIONS = 5;
+const FULL_TEST_ITERATIONS = 3;
+
+// Whether to use setCells() for SharedMatrix to set all cells at once, or set each cell individually
+const USE_SET_CELLS = false;
 
 const client = new TinyliciousClient();
 const containerSchema = {
@@ -376,7 +379,7 @@ function updateChart(chart, dataStore, numCells, timeTaken) {
     chart.update();
 }
 
-// Example usage in populateSharedMatrix
+// Function to populate the SharedMatrix with CSV data
 function populateSharedMatrix(sharedMatrix, csvData) {
     const rowCount = csvData.length;
     const colCount = csvData[0]?.length || 0;
@@ -394,23 +397,31 @@ function populateSharedMatrix(sharedMatrix, csvData) {
     sharedMatrix.insertRows(0, rowCount);
     sharedMatrix.insertCols(0, colCount);
 
-    // Populate the matrix with data
+    // Flatten the 2D array into a 1D array
+    const flattenedData = csvData.flat();
+
+    // Populate the SharedMatrix with the entire dataset
+    console.log("Setting total cells: ", flattenedData.length);
     const start = performance.now();
-    for (let row = 0; row < rowCount; row++) {
-        for (let col = 0; col < colCount; col++) {
-            sharedMatrix.setCell(row, col, csvData[row][col]);
-        }
-    }
+	if(USE_SET_CELLS) {
+    	sharedMatrix.setCells(0, 0, colCount, flattenedData);
+	} else {
+		for (let row = 0; row < rowCount; row++) {
+			for (let col = 0; col < colCount; col++) {
+				sharedMatrix.setCell(row, col, csvData[row][col]);
+			}
+		}
+	}
     const end = performance.now();
     const timeTaken = end - start;
 
-    console.log("Populating SharedMatrix took:", timeTaken, "ms");
+    console.log("Total cells set: ", sharedMatrix.rowCount * sharedMatrix.colCount);
+    console.log("Setting cells took: ", timeTaken, "ms");
 
-    // Update the SharedMatrix chart
+    // Update the chart
     updateChart(sharedMatrixChart, sharedMatrixData, rowCount * colCount, timeTaken);
 }
 
-// Example usage in populateSharedTree
 function populateSharedTree(sharedTreeView, csvData) {
     console.log("Populating SharedTree with CSV data");
 
@@ -448,16 +459,21 @@ async function runFullPerformanceTest() {
     const testFiles = await fetchTestFiles(testFilesFolder); // Fetch the list of test files
     const iterations = FULL_TEST_ITERATIONS; // Number of times to test each file with each DDS
 
-    for (const fileName of testFiles) {
-        console.log(`Testing file: ${fileName}`);
-        const fileContent = await fetchFileContent(`${testFilesFolder}/${fileName}`);
+	for (let i = 0; i < iterations; i++) {
+		console.log(`Iteration ${i + 1} of ${iterations}`);
+		for (const fileName of testFiles) {
+			console.log(`Testing file: ${fileName}`);
+       		const fileContent = await fetchFileContent(`${testFilesFolder}/${fileName}`);
 
-        for (let i = 0; i < iterations; i++) {
-            console.log(`Iteration ${i + 1} for SharedMatrix`);
             await testDDS("SharedMatrix", fileContent);
 
-            console.log(`Iteration ${i + 1} for SharedTree`);
+			// wait a second to make sure chart can update
+			await new Promise((resolve) => setTimeout(resolve, 2000));
+
             await testDDS("SharedTree", fileContent);
+
+			// wait a second to make sure chart can update
+			await new Promise((resolve) => setTimeout(resolve, 2000));
         }
     }
 
@@ -479,9 +495,9 @@ async function fetchTestFiles(folderPath) {
 		"customers-50000.csv",
 		"customers-60000.csv",
 		"customers-70000.csv",
-		"customers-80000.csv",
-		"customers-90000.csv",
-		"customers-100000.csv"
+		// "customers-80000.csv",
+		// "customers-90000.csv",
+		// "customers-100000.csv"
 	];
 }
 
