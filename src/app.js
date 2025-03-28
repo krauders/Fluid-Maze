@@ -292,6 +292,15 @@ function initializeCharts() {
                     borderWidth: 2,
                     fill: true,
                 },
+                {
+                    label: "Memory Usage Delta (MB)",
+                    data: [],
+                    borderColor: "rgba(255, 159, 64, 1)",
+                    backgroundColor: "rgba(255, 159, 64, 0.2)",
+                    borderWidth: 2,
+                    fill: true,
+                    yAxisID: "y2",
+                },
             ],
         },
         options: {
@@ -312,6 +321,16 @@ function initializeCharts() {
                     title: {
                         display: true,
                         text: "Average Time (ms)",
+                    },
+                },
+                y2: {
+                    position: "right",
+                    title: {
+                        display: true,
+                        text: "Memory Usage (MB)",
+                    },
+                    grid: {
+                        drawOnChartArea: false, // Prevent grid lines from overlapping
                     },
                 },
             },
@@ -326,11 +345,20 @@ function initializeCharts() {
                 {
                     label: "Average Time to Set Cells (ms)",
                     data: [],
-                    borderColor: "rgba(255, 99, 132, 1)",
-                    backgroundColor: "rgba(255, 99, 132, 0.2)",
+                    borderColor: "rgba(75, 192, 192, 1)",
+                    backgroundColor: "rgba(75, 192, 192, 0.2)",
                     borderWidth: 2,
                     fill: true,
                 },
+				{
+					label: "Memory Usage (MB)",
+					data: [], // This should be updated with memory data
+					borderColor: "rgba(255, 159, 64, 1)",
+					backgroundColor: "rgba(255, 159, 64, 0.2)",
+					borderWidth: 2,
+					fill: true,
+					yAxisID: "y2", // Ensure this links to the secondary Y-axis
+				}
             ],
         },
         options: {
@@ -353,30 +381,61 @@ function initializeCharts() {
                         text: "Average Time (ms)",
                     },
                 },
+				y2: {
+					position: "right",
+					title: {
+						display: true,
+						text: "Memory Usage (MB)",
+					},
+					grid: {
+						drawOnChartArea: false, // Prevent grid lines from overlapping
+					},
+				},
             },
         },
     });
 }
 
 // Update the chart with new data
-function updateChart(chart, dataStore, numCells, timeTaken) {
+function updateChart(chart, dataStore, numCells, timeTaken, memoryUsed) {
     // Group data by the number of cells
     if (!dataStore[numCells]) {
-        dataStore[numCells] = [];
+        dataStore[numCells] = { times: [], memory: [] };
     }
-    dataStore[numCells].push(timeTaken);
+    dataStore[numCells].times.push(timeTaken);
+    if (memoryUsed !== null && memoryUsed !== undefined) {
+        console.log(`Adding memory data: ${memoryUsed} MB`);
+        dataStore[numCells].memory.push(memoryUsed);
+    } else {
+        console.log(`No memory data available for ${numCells} cells`);
+    }
 
-    // Calculate the average time for each group
+    console.log(`Updating chart for ${numCells} cells:`);
+    console.log(`Time taken: ${timeTaken} ms`);
+    console.log(`Memory used: ${memoryUsed} MB`);
+
+    // Calculate the average time and memory for each group
     const labels = Object.keys(dataStore).map(Number).sort((a, b) => a - b);
     const averages = labels.map((cells) => {
-        const times = dataStore[cells];
+        const times = dataStore[cells].times;
         return times.reduce((sum, time) => sum + time, 0) / times.length;
     });
+    const memoryAverages = labels.map((cells) => {
+        const memory = dataStore[cells].memory;
+        return memory.length > 0
+            ? memory.reduce((sum, mem) => sum + mem, 0) / memory.length
+            : 0; // Default to 0 if the memory array is empty
+    });
+
+    console.log(`Labels: ${labels}`);
+    console.log(`Time averages: ${averages}`);
+    console.log(`Memory averages: ${memoryAverages}`);
 
     // Update the chart
     chart.data.labels = labels;
-    chart.data.datasets[0].data = averages;
-    chart.update();
+    chart.data.datasets[0].data = averages; // Time dataset
+    chart.data.datasets[1].data = memoryAverages; // Memory dataset
+    chart.update("none");
 }
 
 // Function to populate the SharedMatrix with CSV data
@@ -468,12 +527,17 @@ async function runFullPerformanceTest() {
             await testDDS("SharedMatrix", fileContent);
 
 			// wait a second to make sure chart can update
-			await new Promise((resolve) => setTimeout(resolve, 2000));
+			await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+		await new Promise((resolve) => setTimeout(resolve, 5000));
+		for (const fileName of testFiles) {
+			console.log(`Testing file: ${fileName}`);
+       		const fileContent = await fetchFileContent(`${testFilesFolder}/${fileName}`);
 
             await testDDS("SharedTree", fileContent);
 
 			// wait a second to make sure chart can update
-			await new Promise((resolve) => setTimeout(resolve, 2000));
+			await new Promise((resolve) => setTimeout(resolve, 1000));
         }
     }
 
@@ -514,20 +578,40 @@ async function fetchFileContent(filePath) {
 async function testDDS(ddsType, fileContent) {
     const csvData = parseCSV(fileContent); // Parse the CSV content into an array
 
+    // Measure memory before the operation
+    const memoryBefore = performance.memory ? performance.memory.usedJSHeapSize : null;
+
+    let timeTaken;
     if (ddsType === "SharedMatrix") {
         const start = performance.now();
         populateSharedMatrix(sharedMatrix, csvData);
         const end = performance.now();
-        const timeTaken = end - start;
+        timeTaken = end - start;
         console.log(`SharedMatrix test completed in ${timeTaken} ms`);
-        updateChart(sharedMatrixChart, sharedMatrixData, csvData.length * csvData[0].length, timeTaken);
     } else if (ddsType === "SharedTree") {
         const start = performance.now();
         populateSharedTree(sharedTreeView, csvData);
         const end = performance.now();
-        const timeTaken = end - start;
+        timeTaken = end - start;
         console.log(`SharedTree test completed in ${timeTaken} ms`);
-        updateChart(sharedTreeChart, sharedTreeData, csvData.length * csvData[0].length, timeTaken);
+    }
+
+    // Measure memory after the operation
+    const memoryAfter = performance.memory ? performance.memory.usedJSHeapSize : null;
+
+    let memoryUsed = null;
+    if (memoryBefore !== null && memoryAfter !== null) {
+        memoryUsed = (memoryAfter - memoryBefore) / 1024 / 1024; // Convert to MB
+        console.log(`${ddsType} memory usage: ${memoryUsed.toFixed(2)} MB`);
+    } else {
+        console.log(`${ddsType} memory usage: Memory API not supported`);
+    }
+
+    // Update the chart
+    if (ddsType === "SharedMatrix") {
+        updateChart(sharedMatrixChart, sharedMatrixData, csvData.length * csvData[0].length, timeTaken, memoryUsed);
+    } else if (ddsType === "SharedTree") {
+        updateChart(sharedTreeChart, sharedTreeData, csvData.length * csvData[0].length, timeTaken, memoryUsed);
     }
 }
 
