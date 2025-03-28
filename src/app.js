@@ -8,7 +8,7 @@ import { TinyliciousClient } from "@fluidframework/tinylicious-client";
 import { SharedTree, SchemaFactory, TreeViewConfiguration } from "fluid-framework";
 
 // Number of iterations to run for each file when doing a full performance test
-const FULL_TEST_ITERATIONS = 3;
+const FULL_TEST_ITERATIONS = 2;
 
 // Whether to use setCells() for SharedMatrix to set all cells at once, or set each cell individually
 const USE_SET_CELLS = false;
@@ -327,7 +327,7 @@ function initializeCharts() {
                     position: "right",
                     title: {
                         display: true,
-                        text: "Memory Usage (MB)",
+                        text: "Memory Usage Delta (MB)",
                     },
                     grid: {
                         drawOnChartArea: false, // Prevent grid lines from overlapping
@@ -439,7 +439,7 @@ function updateChart(chart, dataStore, numCells, timeTaken, memoryUsed) {
 }
 
 // Function to populate the SharedMatrix with CSV data
-function populateSharedMatrix(sharedMatrix, csvData) {
+async function populateSharedMatrix(sharedMatrix, csvData) {
     const rowCount = csvData.length;
     const colCount = csvData[0]?.length || 0;
 
@@ -453,8 +453,11 @@ function populateSharedMatrix(sharedMatrix, csvData) {
     if (sharedMatrix.colCount > 0) {
         sharedMatrix.removeCols(0, sharedMatrix.colCount);
     }
-    sharedMatrix.insertRows(0, rowCount);
-    sharedMatrix.insertCols(0, colCount);
+	window.gc && window.gc();
+	await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    await sharedMatrix.insertRows(0, rowCount);
+    await sharedMatrix.insertCols(0, colCount);
 
     // Flatten the 2D array into a 1D array
     const flattenedData = csvData.flat();
@@ -463,11 +466,11 @@ function populateSharedMatrix(sharedMatrix, csvData) {
     console.log("Setting total cells: ", flattenedData.length);
     const start = performance.now();
 	if(USE_SET_CELLS) {
-    	sharedMatrix.setCells(0, 0, colCount, flattenedData);
+    	await sharedMatrix.setCells(0, 0, colCount, flattenedData);
 	} else {
 		for (let row = 0; row < rowCount; row++) {
 			for (let col = 0; col < colCount; col++) {
-				sharedMatrix.setCell(row, col, csvData[row][col]);
+				await sharedMatrix.setCell(row, col, csvData[row][col]);
 			}
 		}
 	}
@@ -478,15 +481,17 @@ function populateSharedMatrix(sharedMatrix, csvData) {
     console.log("Setting cells took: ", timeTaken, "ms");
 
     // Update the chart
-    updateChart(sharedMatrixChart, sharedMatrixData, rowCount * colCount, timeTaken);
+    updateChart(sharedMatrixChart, sharedMatrixData, ((rowCount) * colCount), timeTaken);
 }
 
-function populateSharedTree(sharedTreeView, csvData) {
+async function populateSharedTree(sharedTreeView, csvData) {
     console.log("Populating SharedTree with CSV data");
 
     // Clear the existing tree by resetting the rows array
     const rootNode = sharedTreeView.root;
     rootNode.rows = []; // Reset the rows array to clear the tree
+	window.gc && window.gc();
+	await new Promise((resolve) => setTimeout(resolve, 1000));
 
     // Populate the tree with rows and columns
     const rows = csvData.map((row) => {
@@ -501,7 +506,7 @@ function populateSharedTree(sharedTreeView, csvData) {
     console.log("Populating SharedTree took:", timeTaken, "ms");
 
     // Update the SharedTree chart
-    updateChart(sharedTreeChart, sharedTreeData, rows.length * (rows[0]?.length || 0), timeTaken);
+    updateChart(sharedTreeChart, sharedTreeData, ((rows.length) * (rows[0]?.length) || 0), timeTaken);
 }
 
 // Initialize the charts when the app starts
@@ -524,21 +529,26 @@ async function runFullPerformanceTest() {
 			console.log(`Testing file: ${fileName}`);
        		const fileContent = await fetchFileContent(`${testFilesFolder}/${fileName}`);
 
-            await testDDS("SharedMatrix", fileContent);
+            await testDDS("SharedTree", fileContent);
 
 			// wait a second to make sure chart can update
+			window.gc && window.gc();
 			await new Promise((resolve) => setTimeout(resolve, 1000));
         }
+		window.gc && window.gc();
 		await new Promise((resolve) => setTimeout(resolve, 5000));
 		for (const fileName of testFiles) {
 			console.log(`Testing file: ${fileName}`);
        		const fileContent = await fetchFileContent(`${testFilesFolder}/${fileName}`);
 
-            await testDDS("SharedTree", fileContent);
+            await testDDS("SharedMatrix", fileContent);
 
 			// wait a second to make sure chart can update
+			window.gc && window.gc();
 			await new Promise((resolve) => setTimeout(resolve, 1000));
         }
+		window.gc && window.gc();
+		await new Promise((resolve) => setTimeout(resolve, 5000));
     }
 
     runningIcon.style.display = "none"; // Hide the running icon
@@ -559,7 +569,7 @@ async function fetchTestFiles(folderPath) {
 		"customers-50000.csv",
 		"customers-60000.csv",
 		"customers-70000.csv",
-		// "customers-80000.csv",
+		"customers-80000.csv",
 		// "customers-90000.csv",
 		// "customers-100000.csv"
 	];
@@ -584,13 +594,13 @@ async function testDDS(ddsType, fileContent) {
     let timeTaken;
     if (ddsType === "SharedMatrix") {
         const start = performance.now();
-        populateSharedMatrix(sharedMatrix, csvData);
+        await populateSharedMatrix(sharedMatrix, csvData);
         const end = performance.now();
         timeTaken = end - start;
         console.log(`SharedMatrix test completed in ${timeTaken} ms`);
     } else if (ddsType === "SharedTree") {
         const start = performance.now();
-        populateSharedTree(sharedTreeView, csvData);
+        await populateSharedTree(sharedTreeView, csvData);
         const end = performance.now();
         timeTaken = end - start;
         console.log(`SharedTree test completed in ${timeTaken} ms`);
@@ -609,9 +619,9 @@ async function testDDS(ddsType, fileContent) {
 
     // Update the chart
     if (ddsType === "SharedMatrix") {
-        updateChart(sharedMatrixChart, sharedMatrixData, csvData.length * csvData[0].length, timeTaken, memoryUsed);
+        updateChart(sharedMatrixChart, sharedMatrixData, csvData.length * csvData[0].length, timeTaken, (memoryAfter / 1024 / 1024));
     } else if (ddsType === "SharedTree") {
-        updateChart(sharedTreeChart, sharedTreeData, csvData.length * csvData[0].length, timeTaken, memoryUsed);
+        updateChart(sharedTreeChart, sharedTreeData, csvData.length * csvData[0].length, timeTaken, (memoryAfter / 1024 / 1024));
     }
 }
 
