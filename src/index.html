@@ -1,39 +1,83 @@
-<!-- Copyright (c) Microsoft Corporation. All rights reserved. -->
-<!-- Licensed under the MIT License. -->
-
 <!doctype html>
 <html lang="en" style="height: 100%">
-	<head>
-		<meta charset="UTF-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-		<link
-			rel="icon"
-			href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2280%22>💧</text></svg>"
-		/>
-		<!-- Inline CSS -->
-		<style>
-			#game-over-screen {
-				display: none;
-				position: fixed;
-				top: 0;
-				left: 0;
-				width: 100%;
-				height: 100%;
-				z-index: 9999;
-				animation: game-over-animation 2s linear;
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>CSV Table Performance Test</title>
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        <style>
+            table {
+                border-collapse: collapse;
+                width: 100%;
+            }
+            th, td {
+                border: 1px solid black;
+                padding: 8px;
+                text-align: center;
+            }
+            #logArea {
+                margin-top: 20px;
+                padding: 10px;
+                border: 1px solid #ccc;
+                background-color: #f9f9f9;
+                height: 200px;
+                overflow-y: auto;
+                font-family: monospace;
+                white-space: pre-wrap;
+            }
+            #chartContainer {
+                margin-top: 20px;
+                width: 100%;
+                max-width: 1400px;
+            }
+			canvas {
+				display: block;
+				margin: 0 auto;
 			}
-
-			@keyframes game-over-animation {
-				0% { background: red; }
-				50% { background: yellow; }
-				100% { background: red; }
-			}
-		</style>
-		<title>Fluid Maze</title>
-	</head>
-	<body style="margin: 0; height: 100%">
-		<!--<div id="content" style="min-height: 100%"></div>-->
-		<!-- Add this to your HTML -->
-		<div id="game-over-screen"></div>
-	</body>
+        </style>
+    </head>
+    <body>
+        <h1>CSV Table Performance Test</h1>
+        <div>
+            <label for="attachContainer">Attach Container:</label>
+            <input type="checkbox" id="attachContainer" />
+        </div>
+        <div>
+            <label for="handleQuotes">Handle Quotes in CSV:</label>
+            <input type="checkbox" id="handleQuotes" />
+        </div>
+        <div>
+            <label for="renderTable">Render Table in UI:</label>
+            <input type="checkbox" id="renderTable" />
+        </div>
+		<div>
+			<label for="ddsSelector">Select DDS:</label>
+			<select id="ddsSelector">
+				<option value="SharedMatrix">SharedMatrix</option>
+				<option value="SharedTree">SharedTree</option>
+			</select>
+		</div>
+        <div>
+            <label for="csvFile">Upload CSV File:</label>
+            <input type="file" id="csvFile" accept=".csv" />
+        </div>
+		<div>
+			<button id="fullPerformanceTest">Run Full Performance Test</button>
+			<span id="runningIcon" style="display: none;">⏳ Running...</span>
+		</div>
+		<div id="chartContainer" style="display: flex; justify-content: space-around;">
+			<div>
+				<h3>SharedMatrix Performance</h3>
+				<canvas id="sharedMatrixChart" width="600" height="400"></canvas>
+			</div>
+			<div>
+				<h3>SharedTree Performance</h3>
+				<canvas id="sharedTreeChart" width="600" height="400"></canvas>
+			</div>
+		</div>
+        <div id="logArea"></div>
+        <div id="content">
+            <table id="matrixTable"></table>
+        </div>
+    </body>
 </html>

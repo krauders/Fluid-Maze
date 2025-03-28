@@ -3,470 +3,527 @@
  * Licensed under the MIT License.
  */
 
-import { SharedTree, SchemaFactory, Tree, TreeViewConfiguration } from "fluid-framework";
+import { SharedMatrix } from "@fluidframework/matrix";
 import { TinyliciousClient } from "@fluidframework/tinylicious-client";
+import { SharedTree, SchemaFactory, TreeViewConfiguration } from "fluid-framework";
 
-const clientProps = { connection: { port: 443, domain: "https://effective-goldfish-5wv9gjxr5qxh49x6-7070.app.github.dev" } };
-const client = new TinyliciousClient(clientProps);
+// Number of iterations to run for each file when doing a full performance test
+const FULL_TEST_ITERATIONS = 5;
+
+const client = new TinyliciousClient();
 const containerSchema = {
-	initialObjects: { mazeTree: SharedTree },
+    initialObjects: { 
+		sharedMatrix: SharedMatrix,
+		sharedTree: SharedTree
+	},
 };
-
-const root = document.getElementById("content");
-
-// The string passed to the SchemaFactory should be unique
-const sf = new SchemaFactory("fluidHelloWorldSample");
-
-class Columns extends sf.array("Columns", sf.number) {}
-
+const sf = new SchemaFactory("sharedMatrixPerf");
+class Columns extends sf.array("Columns", sf.string) {}
 class Rows extends sf.array("Rows", Columns) {}
-
-class Player extends sf.object("Player", {
-	number: sf.number,
-	x: sf.number,
-	y: sf.number,
-	initials: sf.string,
-	uuid: sf.string
-}) {}
-
-class PlayerList extends sf.array("PlayerList", Player) {}
-
-// Here we define an object we'll use in the schema, a Maze.
-class Maze extends sf.object("Maze", {
-	rows: Rows,
-	playerList: PlayerList
-}) {}
-
-// Maze configuration
-// The rows and columns actually get multiplied by 2x+1 to account for the walls
-const mazeRows = 20;
-const mazeColumns = 20;
-// player's position
-let player;
-
-let initialMaze = {
-	rows: [],
-	playerList: []
-};
-
-// Here we define the tree schema, which has a single Maze object.
+class Table extends sf.object("Table", {
+	rows: Rows
+}) {};
 const treeConfiguration = new TreeViewConfiguration({
-	schema: Maze,
+	schema: Table,
 });
 
-let globalMazeRef;
+const table = document.getElementById("matrixTable");
+const csvFileInput = document.getElementById("csvFile");
 
-// color for this player
-const playerColor = getRandomColor();
-// color for other players = gray
-const otherPlayerColor = 'gray';
-let playerNumber;
+const attachContainerCheckbox = document.getElementById("attachContainer");
+const handleQuotesCheckbox = document.getElementById("handleQuotes");
+const renderTableCheckbox = document.getElementById("renderTable");
+const logArea = document.getElementById("logArea");
 
-// pop up a modal to ask the user to enter their 2-3 letter initials
-let initials;
-
-// method to check if the connection state is 2 or 3 (connected?) and if not, wait for 5 seconds and check again
-const checkConnectionState = async (container) => {
-	if (container.connectionState !== 3 && container.connectionState !== 2) {
-		console.log("Container connection state:" + container.connectionState);
-		await new Promise((resolve) => setTimeout(resolve, 5000));
-		await checkConnectionState(container);
-	}
+// Override console.log to display logs in the logArea
+const originalConsoleLog = console.log;
+console.log = (...args) => {
+    originalConsoleLog(...args);
+    const logMessage = args.map(arg => (typeof arg === "object" ? JSON.stringify(arg) : arg)).join(" ");
+    const logEntry = document.createElement("div");
+    logEntry.textContent = logMessage;
+    logArea.appendChild(logEntry);
+    logArea.scrollTop = logArea.scrollHeight; // Auto-scroll to the bottom
 };
 
-let globalContainer;
-
-const loadExistingMaze = async (id) => {
-	console.log("Getting container: ", id);
-	const { container } = await client.getContainer(id, containerSchema).catch((error) => {
-		console.error("Error getting container: ", error);
-		// redirect to root path
-		// location.href = "/";
-	});
-	globalContainer = container;
-	const sharedTree = container.initialObjects.mazeTree.viewWith(treeConfiguration);
-	const mazeModel = sharedTree.root;
-	globalMazeRef = mazeModel;
-	console.log("Loaded maze: ", mazeModel.playerList);
-	console.log("Player position: ", player);
-	console.log("Player list: ", mazeModel.playerList);
-	drawMaze(mazeModel, root);
-	Tree.on(mazeModel.playerList, "treeChanged", drawMaze);
-	console.log("Container connection state:" + container.connectionState);
-	initials = prompt("Please enter your 2-3 letter initials");
-	await checkConnectionState(container);
-	console.log("Container connection state:" + container.connectionState);
-	playerNumber = globalMazeRef.playerList.length + 1;
-	// make sure there isn't already a player with the same number
-	while (globalMazeRef.playerList.find(p => p.number === playerNumber)) {
-		playerNumber++;
-	}
-	console.log("Player number: ", playerNumber);
-	mazeModel.playerList.insertAtEnd(getRandomPosition(mazeModel));
-	player = {...mazeModel.playerList.find(p => p.number === playerNumber)};
-	drawMaze(mazeModel, root);
-};
-
-const generateMaze = async(rows, columns) => {
-    let maze = Array(rows * 2 + 1).fill().map(() => Array(columns * 2 + 1).fill(0));
-    let stack = [];
-    let current = { x: Math.floor(Math.random() * rows) * 2 + 1, y: Math.floor(Math.random() * columns) * 2 + 1 };
-
-    function isInsideMaze(x, y) {
-        return x > 0 && y > 0 && x < rows * 2 && y < columns * 2;
-    }
-
-    function getNeighbors(x, y) {
-        let neighbors = [
-            { x: x - 2, y: y, wall: 'top' },
-            { x: x, y: y + 2, wall: 'right' },
-            { x: x + 2, y: y, wall: 'bottom' },
-            { x: x, y: y - 2, wall: 'left' }
-        ];
-        return neighbors.filter(neighbor => isInsideMaze(neighbor.x, neighbor.y) && maze[neighbor.x][neighbor.y] === 0);
-    }
-
-    function carvePath(x, y, direction) {
-        switch (direction) {
-            case 'top': maze[x - 1][y] = 1; maze[x][y] = 1; break;
-            case 'right': maze[x][y + 1] = 1; maze[x][y] = 1; break;
-            case 'bottom': maze[x + 1][y] = 1; maze[x][y] = 1; break;
-            case 'left': maze[x][y - 1] = 1; maze[x][y] = 1; break;
-        }
-    }
-
-    maze[current.x][current.y] = 1;
-    do {
-        let neighbors = getNeighbors(current.x, current.y);
-        if (neighbors.length > 0) {
-            let next = neighbors[Math.floor(Math.random() * neighbors.length)];
-            carvePath(current.x, current.y, next.wall);
-            maze[next.x][next.y] = 1;
-            stack.push(current);
-            current = next;
-        } else if (stack.length > 0) {
-            current = stack.pop();
-        }
-    } while (stack.length > 0);
-
-	// The maze is too dense, so we remove some random walls
-	let removedWalls = 0;
-	while (removedWalls < (rows*3)) {
-		let x = Math.floor(Math.random() * rows) * 2;
-		let y = Math.floor(Math.random() * columns) * 2;
-		if (maze[x][y] == 0 && isInsideMaze(x, y)) {
-			maze[x][y] = 1;
-			removedWalls++;
-		}
-	}
-
-	const { container } = await client.createContainer(containerSchema, "2");
-	globalContainer = container;
-	initialMaze.rows = maze;
-	playerNumber = 1;
-	initials = prompt("Please enter your 2-3 letter initials");
-	player = getRandomPosition(initialMaze);
-	initialMaze.playerList.push(player);
-	const sharedTree = container.initialObjects.mazeTree.viewWith(treeConfiguration);
-	sharedTree.initialize(new Maze(initialMaze));
-
-	const id = await container.attach();
-
-	const mazeModel = sharedTree.root;
-	player = {...mazeModel.playerList.find(p => p.number === playerNumber)};
-	globalMazeRef = sharedTree.root;
-	window.maze = sharedTree.root;
-
-	drawMaze(mazeModel, root);
-	Tree.on(mazeModel.playerList, "treeChanged", drawMaze);
-	return id;
-    // return maze;
-}
-
-function getRandomPosition(mazeModel) {
-	let number, x, y;
-	do {
-		number = playerNumber;
-		x = Math.floor(Math.random() * mazeModel.rows.length);
-		y = Math.floor(Math.random() * (mazeModel.rows[0] && mazeModel.rows[0].length || mazeModel.rows.length));
-	} while (mazeModel.rows[y][x] === 0);
-	return { number, x, y, initials, uuid: Math.random().toString(36)};
-}
-
-let initialMazeDrawn = false;
-
-// Draw the maze
-function drawMaze(mazeModel, root) {
-	// Apparently the Tree.on() method passes a new argument now that is not the tree itself
-		mazeModel = globalMazeRef;
-	// }
-	// If current player was removed from the playerlist, it means you lost the game. Remove from the maze.
-	if (player && !mazeModel.playerList.find(p => p.number === player.number)) {
-		player = null;
-	}
-    let table = document.querySelector('table');
-    if (!table) {
-        table = document.createElement('table');
-        table.style.width = "100%"; // Set the table width to 100% of the document
-        table.style.height = "100%"; // Set the table height to 100% of the document
-        document.body.appendChild(table);
-    }
-
-    for (let i = 0; i < mazeModel.rows.length; i++) {
-        let row = table.rows[i] || table.insertRow();
-        for (let j = 0; j < mazeModel.rows[i].length; j++) {
-            let cell = row.cells[j] || row.insertCell();
-            cell.style.width = '20px'; // Set a fixed width
-            cell.style.height = '20px'; // Set a fixed height
-            if (mazeModel.rows[i][j] === 0) {
-				if(!initialMazeDrawn) {
-					cell.style.backgroundColor = 'black';
-					cell.style.width = '20px'; // Set a fixed width
-					cell.style.height = '20px'; // Set a fixed height
-					cell.style.border = 'none'; // Remove the border
-					let text = cell.querySelector('span') || document.createElement('span'); 
-					text.textContent = '';
-				}
-            } else if (player && i === player.y && j === player.x) {
-                cell.style.backgroundColor = playerColor;
-                cell.style.border = '3px solid black'; // Add a dark border
-                cell.style.width = '14px'; // Adjust the width to account for the border
-                cell.style.height = '14px'; // Adjust the height to account for the border
-                cell.style.position = 'relative'; // Make the cell a relative container
-
-                let text = cell.querySelector('span') || document.createElement('span'); // Create a new span element for the text
-                text.textContent = initials; // Set the text
-                text.style.position = 'absolute'; // Position the text absolutely
-                text.style.top = '50%'; // Center the text vertically
-                text.style.left = '50%'; // Center the text horizontally
-                text.style.transform = 'translate(-50%, -50%)'; // Ensure the text is centered
-                text.style.color = 'black'; // Set the text color to black
-
-                cell.appendChild(text); // Add the text to the cell
-            } else {
-                cell.style.backgroundColor = 'white'
-				cell.style.width = '20px'; // Set a fixed width
-				cell.style.height = '20px'; // Set a fixed height
-				cell.style.border = 'none'; // Remove the border
-				let text = cell.querySelector('span') || document.createElement('span'); 
-				text.textContent = '';
-            }
-        }
-    }
-
-	// add other players from the playerList
-	mazeModel.playerList.filter(p => p.number !== playerNumber).forEach(player => {
-		let cell = table.rows[player.y].cells[player.x];
-		cell.style.backgroundColor = otherPlayerColor;
-		cell.style.border = '3px solid black'; // Add a dark border
-		cell.style.width = '14px'; // Adjust the width to account for the border
-		cell.style.height = '14px'; // Adjust the height to account for the border
-		cell.style.position = 'relative'; // Make the cell a relative container
-
-		let text = cell.querySelector('span') || document.createElement('span'); // Create a new span element for the text
-		text.textContent = player.initials; // Set the text
-		text.style.position = 'absolute'; // Position the text absolutely
-		text.style.top = '50%'; // Center the text vertically
-		text.style.left = '50%'; // Center the text horizontally
-		text.style.transform = 'translate(-50%, -50%)'; // Ensure the text is centered
-		text.style.color = 'black'; // Set the text color to black
-
-		cell.appendChild(text); // Add the text to the cell
-	});
-	initialMazeDrawn = true;
-}
-
-// Generate a random bold color
-function getRandomColor() {
-    let color = "#";
-    for (let i = 0; i < 3; i++) {
-        let component = Math.floor(Math.random() * (256 - 128) + 128).toString(16);
-        color += component.length === 1 ? "0" + component : component;
-    }
-    return color;
-}
+const ddsSelector = document.getElementById("ddsSelector");
+let sharedMatrix;
+let sharedTree;
+let sharedTreeView;
 
 async function start() {
-	if (location.hash) {
-		console.log("Loading existing maze: ", location.hash.substring(1));
-		await loadExistingMaze(location.hash.substring(1));
-	} else {
-		console.log("Generating new maze");
-		const id = await generateMaze(mazeRows, mazeColumns);
-		console.log("New maze id: ", id);
-		location.hash = id;
-		setTimeout(() => {
-			let aiPlayer = getRandomPosition(globalMazeRef);
-			aiPlayer.initials = "AI";
-			aiPlayer.number = globalMazeRef.playerList.length + 1;
-			globalMazeRef.playerList.insertAtEnd(aiPlayer);
-		}, 5000);
-		setTimeout(() => {
-			updateAiPlayer();
-		}, 10000);
-	}
+    console.log("Starting the app");
+
+    // Create a detached container
+    const { container } = await client.createContainer(containerSchema, "2");
+    console.log("Container attachState: ", container.attachState);
+
+    // Access the DDS objects from the container's initialObjects
+    sharedMatrix = container.initialObjects.sharedMatrix;
+    sharedTreeView = container.initialObjects.sharedTree.viewWith(treeConfiguration);
+	sharedTreeView.initialize(new Table({rows: []}));
+    sharedTree = container.initialObjects.sharedTree;
+	console.log(sharedTreeView.compatibility);
+
+    let currentDDS = sharedMatrix; // Default DDS is SharedMatrix
+
+    // Listen for DDS selection changes
+    ddsSelector.addEventListener("change", (event) => {
+        const selectedDDS = event.target.value;
+        if (selectedDDS === "SharedMatrix") {
+            currentDDS = sharedMatrix;
+            console.log("Switched to SharedMatrix");
+        } else if (selectedDDS === "SharedTree") {
+            currentDDS = sharedTree;
+            console.log("Switched to SharedTree");
+        }
+    });
+
+    // Listen for CSV file upload
+    csvFileInput.addEventListener("change", async (event) => {
+        const file = event.target.files[0];
+        if (file) {
+            const handleQuotes = handleQuotesCheckbox.checked;
+            console.log("Reading CSV file: ", file.name);
+            const csvData = await readCSVFile(file, handleQuotes);
+            console.log("Finished reading CSV file: ", file.name);
+            console.log("Populating selected DDS with CSV data");
+
+            if (currentDDS === sharedMatrix) {
+                populateSharedMatrix(sharedMatrix, csvData);
+                renderMatrix(sharedMatrix);
+            } else if (currentDDS === sharedTree) {
+                populateSharedTree(sharedTreeView, csvData);
+                renderTree(sharedTreeView);
+            }
+        }
+    });
+
+    // Optionally attach the container
+    attachContainerCheckbox.addEventListener("change", async () => {
+        if (attachContainerCheckbox.checked) {
+            const containerId = await container.attach();
+            console.log("Container attached with ID:", containerId);
+        } else {
+            console.log("Container not attached");
+        }
+    });
+
+    // Listen for changes in the SharedMatrix or SharedTree and update the UI
+    sharedMatrix.on("valueChanged", () => {
+        if (currentDDS === sharedMatrix) {
+            renderMatrix(sharedMatrix);
+        }
+    });
+
+    sharedTree.on("valueChanged", () => {
+        if (currentDDS === sharedTree) {
+            renderTree(sharedTree);
+        }
+    });
 }
 
-// Periodically check if the game has an AI player and call chatgpt to get the next move
-const updateAiPlayer = () => {
-	const aiPlayer = globalMazeRef.playerList.find(p => p.initials === "AI");
-	if (aiPlayer) {
-		console.log("AI player found");
-		const serializedGameState = JSON.stringify(globalMazeRef);
-		const prompt = "This is a 2D maze game with multiple human players and you, an AI player. \
-		The game state is represented by a 2D array of 0s and 1s, where 0 represents a wall and 1 represents a path. \
-		Rows are listed top to bottom, with each row listing the value in each column from left to right. \
-		You can't go through walls, so you should only move in directions where an open path exists. \
-		The game state is updated in real-time as players move around the maze. \
-		When players collide, one of the players is randomly chosen and eliminated. \
-		You should either chase other players or run away from them. \
-		The game ends when only one player remains. \
-		Your task is to predict the next 10 moves of the AI player based on the current game state. \
-		Please only respond with 10 arrow key moves for the AI player, consisting of 'ArrowUp,' 'ArrowDown,' 'ArrowLeft,' or 'ArrowRight.' \
-		You can put it in a JSON object with a comma separated list of moves like {'moves': 'ArrowUp,ArrowUp,ArrowLeft,ArrowLeft,ArrowDown,ArrowUp,ArrowUp,ArrowLeft,ArrowLeft,ArrowDown'} but don't wrap the JSON in a code block. \
-		The game state is as follows: " + serializedGameState;
-		// call chatgpt to get the next move
-		fetch("https://api.openai.com/v1/chat/completions", {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				"Authorization": "Bearer <your-token-here>",
-				"Accept": "application/json"
-			},
-			body: JSON.stringify({
-				"max_tokens": 50,
-				"model": "gpt-4o",
-				"messages": [
-					{
-						"role": "user",
-						"content": prompt
-					}
-				]
-			})
-		}).then(response => response.json()).then(data => {
-			// check if status is 200
-			if (data.error) {
-				console.error("AI response error: ", data.error);
-				return;
-			}
-			console.log("AI response: ", data);
-			const moveText = data.choices[0].message.content.replace(/'/g, "\"");
-			console.log("AI move text: ", moveText);
-			const moves = moveText && JSON.parse(moveText).moves.split(",");
-			console.log("AI moves: ", moves);
-			// update the AI player's position based on the moves but add a slight delay between each move
-			moves.forEach((move, index) => {
-				setTimeout(() => {
-					console.log("AI move: ", move);
-					let newX = globalMazeRef.playerList.find(p => p.initials === "AI").x;
-					let newY = globalMazeRef.playerList.find(p => p.initials === "AI").y;
-					switch (move) {
-						case "ArrowUp":
-							newY--;
-							break;
-						case "ArrowDown":
-							newY++;
-							break;
-						case "ArrowLeft":
-							newX--;
-							break;
-						case "ArrowRight":
-							newX++;
-							break;
-					}
-					if (globalMazeRef.rows[newY][newX] === 1) {
-						const collidedPlayer = globalMazeRef.playerList.find(p => p.number !== aiPlayer.number && p.x === newX && p.y === newY);
-						if (collidedPlayer) {
-							console.log("AI collided with player", collidedPlayer.number);
-						} else {
-							globalMazeRef.playerList.find(p => p.initials === "AI").x = newX;
-							globalMazeRef.playerList.find(p => p.initials === "AI").y = newY;
-						}
-					}
-				}, index * 250);
-			});
-			// call updateAiPlayer again after all moves have been processed
-			setTimeout(() => {
-				updateAiPlayer();
-			}, moves.length * 250);
-		}).catch(error => console.error(error));
-	}
-};
+// Function to render the SharedTree as an HTML list
+function renderTree(sharedTreeView) {
+    console.log("Rendering SharedTree");
+
+    // Clear the existing table
+    table.innerHTML = "";
+
+    // Traverse the rows and columns in the tree
+    const rootNode = sharedTreeView.root;
+    const rows = rootNode.rows || [];
+
+    // Get the max rows to render from the input
+	const renderTable = renderTableCheckbox.checked;
+
+    // Don't try to render the table unless the user wants it, as it can be slow for large datasets
+    if (!renderTable) {
+        return;
+    }
+
+    rows.forEach((row, rowIndex) => {
+        const tr = document.createElement("tr");
+        row.forEach((cell, colIndex) => {
+            const td = document.createElement("td");
+            td.textContent = cell || ""; // Render the cell value
+            tr.appendChild(td);
+        });
+        table.appendChild(tr);
+    });
+
+    console.log("SharedTree rendered");
+}
+
+// Function to render the SharedMatrix as an HTML table
+function renderMatrix(sharedMatrix) {
+    // Clear the existing table
+    table.innerHTML = "";
+
+    // Get the dimensions of the matrix
+    const rowCount = sharedMatrix.rowCount;
+    const colCount = sharedMatrix.colCount;
+
+    // Get the max rows to render from the input
+	const renderTable = renderTableCheckbox.checked;
+
+    // Don't try to render the table unless the user wants it, as it can be slow for large datasets
+    if (!renderTable) {
+        return;
+    }
+
+    // Create table rows and cells
+    for (let row = 0; row < rowCount; row++) {
+        const tr = document.createElement("tr");
+        for (let col = 0; col < colCount; col++) {
+            const td = document.createElement("td");
+            td.textContent = sharedMatrix.getCell(row, col) || "";
+            tr.appendChild(td);
+        }
+        table.appendChild(tr);
+    }
+}
+
+// Function to read a CSV file and parse its contents
+function readCSVFile(file, handleQuotes = true) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            const text = event.target.result;
+
+            if (!handleQuotes) {
+                // Basic parsing: Split by commas and newlines
+                const rows = text
+                    .split("\n")
+                    .map((row) => row.split(",").map((cell) => cell.trim()))
+                    .filter((row) => row.length > 0 && row.some((cell) => cell !== ""));
+
+                // Determine the maximum number of columns
+                const maxColCount = Math.max(...rows.map((row) => row.length));
+
+                // Pad rows with missing cells to ensure consistent column count
+                const paddedRows = rows.map((row) => {
+                    while (row.length < maxColCount) {
+                        row.push(""); // Add empty strings for missing cells
+                    }
+                    return row;
+                });
+
+                resolve(paddedRows);
+                return;
+            }
+
+            // Advanced parsing: Handle quotes and commas inside quotes
+            const rows = [];
+            let currentRow = [];
+            let currentCell = "";
+            let insideQuotes = false;
+
+            for (let i = 0; i < text.length; i++) {
+                const char = text[i];
+
+                if (char === '"' && (i === 0 || text[i - 1] !== "\\")) {
+                    // Toggle the insideQuotes flag when encountering an unescaped double quote
+                    insideQuotes = !insideQuotes;
+                } else if (char === "," && !insideQuotes) {
+                    // If not inside quotes, treat a comma as a cell delimiter
+                    currentRow.push(currentCell.trim());
+                    currentCell = "";
+                } else if (char === "\n" && !insideQuotes) {
+                    // If not inside quotes, treat a newline as a row delimiter
+                    currentRow.push(currentCell.trim());
+                    rows.push(currentRow);
+                    currentRow = [];
+                    currentCell = "";
+                } else {
+                    // Otherwise, add the character to the current cell
+                    currentCell += char;
+                }
+            }
+
+            // Add the last cell and row if necessary
+            if (currentCell) {
+                currentRow.push(currentCell.trim());
+            }
+            if (currentRow.length > 0) {
+                rows.push(currentRow);
+            }
+
+            // Determine the maximum number of columns
+            const maxColCount = Math.max(...rows.map((row) => row.length));
+
+            // Pad rows with missing cells to ensure consistent column count
+            const paddedRows = rows.map((row) => {
+                while (row.length < maxColCount) {
+                    row.push(""); // Add empty strings for missing cells
+                }
+                return row;
+            });
+
+            resolve(paddedRows);
+        };
+        reader.onerror = (error) => reject(error);
+        reader.readAsText(file);
+    });
+}
+
+let sharedMatrixChart, sharedTreeChart;
+const sharedMatrixData = {}; // Store data grouped by the number of cells for SharedMatrix
+const sharedTreeData = {}; // Store data grouped by the number of cells for SharedTree
+
+// Initialize the charts
+function initializeCharts() {
+    const matrixCtx = document.getElementById("sharedMatrixChart").getContext("2d");
+    const treeCtx = document.getElementById("sharedTreeChart").getContext("2d");
+
+    sharedMatrixChart = new Chart(matrixCtx, {
+        type: "line",
+        data: {
+            labels: [],
+            datasets: [
+                {
+                    label: "Average Time to Set Cells (ms)",
+                    data: [],
+                    borderColor: "rgba(75, 192, 192, 1)",
+                    backgroundColor: "rgba(75, 192, 192, 0.2)",
+                    borderWidth: 2,
+                    fill: true,
+                },
+            ],
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: {
+                    display: true,
+                },
+            },
+            scales: {
+                x: {
+                    title: {
+                        display: true,
+                        text: "Number of Cells",
+                    },
+                },
+                y: {
+                    title: {
+                        display: true,
+                        text: "Average Time (ms)",
+                    },
+                },
+            },
+        },
+    });
+
+    sharedTreeChart = new Chart(treeCtx, {
+        type: "line",
+        data: {
+            labels: [],
+            datasets: [
+                {
+                    label: "Average Time to Set Cells (ms)",
+                    data: [],
+                    borderColor: "rgba(255, 99, 132, 1)",
+                    backgroundColor: "rgba(255, 99, 132, 0.2)",
+                    borderWidth: 2,
+                    fill: true,
+                },
+            ],
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: {
+                    display: true,
+                },
+            },
+            scales: {
+                x: {
+                    title: {
+                        display: true,
+                        text: "Number of Cells",
+                    },
+                },
+                y: {
+                    title: {
+                        display: true,
+                        text: "Average Time (ms)",
+                    },
+                },
+            },
+        },
+    });
+}
+
+// Update the chart with new data
+function updateChart(chart, dataStore, numCells, timeTaken) {
+    // Group data by the number of cells
+    if (!dataStore[numCells]) {
+        dataStore[numCells] = [];
+    }
+    dataStore[numCells].push(timeTaken);
+
+    // Calculate the average time for each group
+    const labels = Object.keys(dataStore).map(Number).sort((a, b) => a - b);
+    const averages = labels.map((cells) => {
+        const times = dataStore[cells];
+        return times.reduce((sum, time) => sum + time, 0) / times.length;
+    });
+
+    // Update the chart
+    chart.data.labels = labels;
+    chart.data.datasets[0].data = averages;
+    chart.update();
+}
+
+// Example usage in populateSharedMatrix
+function populateSharedMatrix(sharedMatrix, csvData) {
+    const rowCount = csvData.length;
+    const colCount = csvData[0]?.length || 0;
+
+    console.log("Row count: ", rowCount);
+    console.log("Col count: ", colCount);
+
+    // Resize the SharedMatrix
+    if (sharedMatrix.rowCount > 0) {
+        sharedMatrix.removeRows(0, sharedMatrix.rowCount);
+    }
+    if (sharedMatrix.colCount > 0) {
+        sharedMatrix.removeCols(0, sharedMatrix.colCount);
+    }
+    sharedMatrix.insertRows(0, rowCount);
+    sharedMatrix.insertCols(0, colCount);
+
+    // Populate the matrix with data
+    const start = performance.now();
+    for (let row = 0; row < rowCount; row++) {
+        for (let col = 0; col < colCount; col++) {
+            sharedMatrix.setCell(row, col, csvData[row][col]);
+        }
+    }
+    const end = performance.now();
+    const timeTaken = end - start;
+
+    console.log("Populating SharedMatrix took:", timeTaken, "ms");
+
+    // Update the SharedMatrix chart
+    updateChart(sharedMatrixChart, sharedMatrixData, rowCount * colCount, timeTaken);
+}
+
+// Example usage in populateSharedTree
+function populateSharedTree(sharedTreeView, csvData) {
+    console.log("Populating SharedTree with CSV data");
+
+    // Clear the existing tree by resetting the rows array
+    const rootNode = sharedTreeView.root;
+    rootNode.rows = []; // Reset the rows array to clear the tree
+
+    // Populate the tree with rows and columns
+    const rows = csvData.map((row) => {
+        return row.map((cell) => cell); // Each cell is a string
+    });
+
+    const start = performance.now();
+    rootNode.rows = rows; // Assign the new rows to the root node
+    const end = performance.now();
+    const timeTaken = end - start;
+
+    console.log("Populating SharedTree took:", timeTaken, "ms");
+
+    // Update the SharedTree chart
+    updateChart(sharedTreeChart, sharedTreeData, rows.length * (rows[0]?.length || 0), timeTaken);
+}
+
+// Initialize the charts when the app starts
+initializeCharts();
+
+const fullPerformanceTestButton = document.getElementById("fullPerformanceTest");
+const runningIcon = document.getElementById("runningIcon");
+
+async function runFullPerformanceTest() {
+    console.log("Starting full performance test...");
+    runningIcon.style.display = "inline"; // Show the running icon
+
+    const testFilesFolder = ""; // Folder containing test CSV files
+    const testFiles = await fetchTestFiles(testFilesFolder); // Fetch the list of test files
+    const iterations = FULL_TEST_ITERATIONS; // Number of times to test each file with each DDS
+
+    for (const fileName of testFiles) {
+        console.log(`Testing file: ${fileName}`);
+        const fileContent = await fetchFileContent(`${testFilesFolder}/${fileName}`);
+
+        for (let i = 0; i < iterations; i++) {
+            console.log(`Iteration ${i + 1} for SharedMatrix`);
+            await testDDS("SharedMatrix", fileContent);
+
+            console.log(`Iteration ${i + 1} for SharedTree`);
+            await testDDS("SharedTree", fileContent);
+        }
+    }
+
+    runningIcon.style.display = "none"; // Hide the running icon
+    console.log("Full performance test completed.");
+}
+
+// Fetch the list of test files from the /testFiles folder
+async function fetchTestFiles(folderPath) {
+    // Simulate fetching file names (replace with actual server-side logic if needed)
+    return [
+		"customers-100.csv", 
+		"customers-1000.csv", 
+		"customers-5000.csv", 
+		"customers-10000.csv",
+		"customers-20000.csv", 
+		"customers-30000.csv",
+		"customers-40000.csv",
+		"customers-50000.csv",
+		"customers-60000.csv",
+		"customers-70000.csv",
+		"customers-80000.csv",
+		"customers-90000.csv",
+		"customers-100000.csv"
+	];
+}
+
+// Fetch the content of a specific file
+async function fetchFileContent(filePath) {
+    const response = await fetch(filePath);
+    if (!response.ok) {
+        throw new Error(`Failed to fetch file: ${filePath}`);
+    }
+    return await response.text();
+}
+
+// Test a specific DDS with the given file content
+async function testDDS(ddsType, fileContent) {
+    const csvData = parseCSV(fileContent); // Parse the CSV content into an array
+
+    if (ddsType === "SharedMatrix") {
+        const start = performance.now();
+        populateSharedMatrix(sharedMatrix, csvData);
+        const end = performance.now();
+        const timeTaken = end - start;
+        console.log(`SharedMatrix test completed in ${timeTaken} ms`);
+        updateChart(sharedMatrixChart, sharedMatrixData, csvData.length * csvData[0].length, timeTaken);
+    } else if (ddsType === "SharedTree") {
+        const start = performance.now();
+        populateSharedTree(sharedTreeView, csvData);
+        const end = performance.now();
+        const timeTaken = end - start;
+        console.log(`SharedTree test completed in ${timeTaken} ms`);
+        updateChart(sharedTreeChart, sharedTreeData, csvData.length * csvData[0].length, timeTaken);
+    }
+}
+
+// Parse CSV content into a 2D array
+function parseCSV(content) {
+    const rows = content.split("\n").map((row) => row.split(","));
+    return rows;
+}
+
+// Attach event listener to the button
+fullPerformanceTestButton.addEventListener("click", runFullPerformanceTest);
 
 start().then(() => {
-	// Handle keyboard events
-	document.addEventListener('keydown', function(e) {
-		e.preventDefault(); // Prevent default scrolling behavior
-		if(!player) return;
-		let newX = player.x;
-		let newY = player.y;
-		// make a copy of player.x instead of taking a reference
-		switch (e.key) {
-			case 'ArrowUp':
-				newY--;
-				break;
-			case 'ArrowDown':
-				newY++;
-				break;
-			case 'ArrowLeft':
-				newX--;
-				break;
-			case 'ArrowRight':
-				newX++;
-				break;
-		}
-		if (globalMazeRef.rows[newY][newX] === 1) {
-			const collidedPlayer = globalMazeRef.playerList.find(p => p.number !== player.number && p.x === newX && p.y === newY);
-			// const collidedPlayer = null;
-			if (collidedPlayer) {
-				console.log("Player", player.number, "collided with player", collidedPlayer.number);
-				const currentPlayer = globalMazeRef.playerList.find(p => p.number === player.number);
-				const winningPlayer = Math.random() < 0.5 ? currentPlayer : collidedPlayer;
-				const losingPlayer = winningPlayer === currentPlayer ? collidedPlayer : currentPlayer;
-				const losingPlayerIndex = globalMazeRef.playerList.findIndex(p => p.number === losingPlayer.number);
-				if (losingPlayerIndex !== -1) {
-					globalMazeRef.playerList.removeAt(losingPlayerIndex);
-					console.log("Player", losingPlayer.number, "has been removed from the game.");
-					if (losingPlayer.number === playerNumber) {
-						player = null;
-						// Show the game over screen
-						let gameOverScreen = document.getElementById('game-over-screen');
-						gameOverScreen.style.display = 'block';
-						// Remove the game over screen after the animation ends
-						setTimeout(() => gameOverScreen.style.display = 'none', 2000);
-					} else {
-						player.x = newX;
-						player.y = newY;
-						Tree.runTransaction(globalMazeRef.playerList, (playerList) => {
-							// only change the player's position if it has changed from previous value
-							if(currentPlayer.x !== player.x) {
-								currentPlayer.x = player.x;
-							}
-							if(currentPlayer.y !== player.y) {
-								currentPlayer.y = player.y;
-							}
-						});
-						// if the player is the last player remaining, they win
-						if (globalMazeRef.playerList.length === 1) {
-							console.log("Player", winningPlayer.number, "has won the game!");
-							alert("Player " + winningPlayer.number + " with initials " + winningPlayer.initials + " has won the game!");
-						}
-					}
-				}
-			} else {
-				player.x = newX;
-				player.y = newY;
-				Tree.runTransaction(globalMazeRef.playerList, (playerList) => {
-					const currentPlayer = playerList.find(p => p.number === player.number);
-					// only change the player's position if it has changed from previous value
-					if(currentPlayer.x !== player.x) {
-						currentPlayer.x = player.x;
-					}
-					if(currentPlayer.y !== player.y) {
-						currentPlayer.y = player.y;
-					}
-				});
-			}
-		}
-	});
+    console.log("App started");
 }).catch((error) => console.error(error));
