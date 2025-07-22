@@ -25,9 +25,9 @@
 		"test:jest": "jest"
 	},
 	"dependencies": {
-		"@fluidframework/matrix": "^2.30.0",
-		"@fluidframework/tinylicious-client": "2.30.0",
-		"fluid-framework": "2.30.0",
+		"@fluidframework/matrix": "^2.50.0",
+		"@fluidframework/tinylicious-client": "2.50.0",
+		"fluid-framework": "2.50.0",
 		"npm-watch": "^0.13.0"
 	},
 	"devDependencies": {
@@ -37,12 +37,12 @@
 		"jest-junit": "^16.0.0",
 		"jest-puppeteer": "^9.0.0",
 		"prettier": "^3.0.3",
-		"puppeteer": "^21.0.0",
+		"puppeteer": "^24.14.0",
 		"start-server-and-test": "^2.0.0",
 		"tinylicious": "^4.0.0",
 		"webpack": "^5.88.2",
 		"webpack-cli": "^5.1.4",
-		"webpack-dev-server": "^4.15.1"
+		"webpack-dev-server": "^5.2.2"
 	},
 	"jest-junit": {
 		"outputDirectory": "nyc",

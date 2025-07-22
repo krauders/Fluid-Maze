@@ -65,16 +65,38 @@
 			<button id="fullPerformanceTest">Run Full Performance Test</button>
 			<span id="runningIcon" style="display: none;">⏳ Running...</span>
 		</div>
-		<div id="chartContainer" style="display: flex; justify-content: space-around;">
-			<div>
-				<h3>SharedMatrix Performance</h3>
-				<canvas id="sharedMatrixChart" width="600" height="400"></canvas>
+		<div id="chartContainer" style="display: flex; flex-direction: column; gap: 20px;">
+			<div style="display: flex; justify-content: space-around; gap: 20px;">
+				<div style="flex: 1;">
+					<h3>Creation Time Comparison</h3>
+					<canvas id="creationTimeChart" width="600" height="400"></canvas>
+				</div>
+				<div style="flex: 1;">
+					<h3>Creation Memory Comparison</h3>
+					<canvas id="creationMemoryChart" width="600" height="400"></canvas>
+				</div>
 			</div>
-			<div>
-				<h3>SharedTree Performance</h3>
-				<canvas id="sharedTreeChart" width="600" height="400"></canvas>
+			<div style="display: flex; justify-content: space-around; gap: 20px;">
+				<div style="flex: 1;">
+					<h3>Update Time Comparison</h3>
+					<canvas id="updateTimeChart" width="600" height="400"></canvas>
+				</div>
+				<div style="flex: 1;">
+					<h3>Update Memory Comparison</h3>
+					<canvas id="updateMemoryChart" width="600" height="400"></canvas>
+				</div>
 			</div>
-		</div>
+			<div style="display: flex; justify-content: space-around; gap: 20px;">
+				<div style="flex: 1;">
+					<h3>Remove Time Comparison</h3>
+					<canvas id="removeTimeChart" width="600" height="400"></canvas>
+				</div>
+				<div style="flex: 1;">
+					<h3>Remove Memory Comparison</h3>
+					<canvas id="removeMemoryChart" width="600" height="400"></canvas>
+				</div>
+			</div>
+        </div>
         <div id="logArea"></div>
         <div id="content">
             <table id="matrixTable"></table>
