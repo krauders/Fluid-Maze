@@ -5,13 +5,12 @@
 
 import { SharedMatrix } from "@fluidframework/matrix";
 import { TinyliciousClient } from "@fluidframework/tinylicious-client";
-import { SharedTree, SchemaFactory, TreeViewConfiguration } from "fluid-framework";
+import { SharedTree, TreeViewConfiguration } from "fluid-framework";
+import { SchemaFactoryAlpha, TableSchema } from "fluid-framework/alpha";
 
 // Number of iterations to run for each file when doing a full performance test
 const FULL_TEST_ITERATIONS = 2;
 
-// Whether to use setCells() for SharedMatrix to set all cells at once, or set each cell individually
-const USE_SET_CELLS = false;
 
 const client = new TinyliciousClient();
 const containerSchema = {
@@ -20,12 +19,39 @@ const containerSchema = {
 		sharedTree: SharedTree
 	},
 };
-const sf = new SchemaFactory("sharedMatrixPerf");
-class Columns extends sf.array("Columns", sf.string) {}
-class Rows extends sf.array("Rows", Columns) {}
-class Table extends sf.object("Table", {
-	rows: Rows
-}) {};
+const schemaFactory = new SchemaFactoryAlpha("test-app");
+
+/**
+ * Defines the schema for a table cell.
+ */
+export const Cell = schemaFactory.string;
+
+/**
+ * Defines the schema for a table column.
+ */
+export class Column extends TableSchema.column({
+	schemaFactory,
+	cell: Cell,
+}) {}
+
+/**
+ * Defines the schema for a table row.
+ */
+export class Row extends TableSchema.row({
+	schemaFactory,
+	cell: Cell,
+}) {}
+
+/**
+ * Defines the schema for a table, which includes columns and rows.
+ * It uses the previously defined Cell, Column, and Row schemas.
+ */
+export class Table extends TableSchema.table({
+	schemaFactory,
+	cell: Cell,
+	column: Column,
+	row: Row,
+}) {}
 const treeConfiguration = new TreeViewConfiguration({
 	schema: Table,
 });
@@ -64,10 +90,15 @@ async function start() {
     // Access the DDS objects from the container's initialObjects
     sharedMatrix = container.initialObjects.sharedMatrix;
     sharedTreeView = container.initialObjects.sharedTree.viewWith(treeConfiguration);
-	sharedTreeView.initialize(new Table({rows: []}));
+    
+    // Initialize SharedTree with proper schema if not already initialized
+    if (sharedTreeView.compatibility.canView === false) {
+        // For TableSchema.table, we need to initialize with empty structure
+        sharedTreeView.initialize(Table.empty());
+    }
+    
     sharedTree = container.initialObjects.sharedTree;
-	console.log(sharedTreeView.compatibility);
-
+    console.log("SharedTree compatibility:", sharedTreeView.compatibility);    
     let currentDDS = sharedMatrix; // Default DDS is SharedMatrix
 
     // Listen for DDS selection changes
@@ -270,36 +301,53 @@ function readCSVFile(file, handleQuotes = true) {
     });
 }
 
-let sharedMatrixChart, sharedTreeChart;
-const sharedMatrixData = {}; // Store data grouped by the number of cells for SharedMatrix
-const sharedTreeData = {}; // Store data grouped by the number of cells for SharedTree
+/**
+ * Performance monitoring Chart.js instances for visualizing SharedMatrix vs SharedTree comparison data
+ * 
+ * @var {Chart} creationTimeChart - Line chart displaying execution time (ms) for initial data population operations across different dataset sizes
+ * @var {Chart} creationMemoryChart - Line chart showing memory consumption (MB) during data creation/insertion phase
+ * @var {Chart} updateTimeChart - Line chart measuring time performance for cell modification operations (adding "_updated" suffix to existing data)
+ * @var {Chart} updateMemoryChart - Line chart tracking memory usage during bulk data update operations
+ * @var {Chart} removeTimeChart - Line chart monitoring execution time for complete data structure cleanup (removing all rows/columns)
+ * @var {Chart} removeMemoryChart - Line chart displaying memory changes during data removal operations
+ * 
+ * Each chart compares SharedMatrix (blue) vs SharedTree (purple) performance across dataset sizes from 100 to 10,000+ cells
+ */
+let creationTimeChart, creationMemoryChart, updateTimeChart, updateMemoryChart, removeTimeChart, removeMemoryChart;
+const creationData = { sharedMatrix: {}, sharedTree: {} }; // Store creation data
+const updateData = { sharedMatrix: {}, sharedTree: {} }; // Store update data  
+const removeData = { sharedMatrix: {}, sharedTree: {} }; // Store remove data
 
 // Initialize the charts
 function initializeCharts() {
-    const matrixCtx = document.getElementById("sharedMatrixChart").getContext("2d");
-    const treeCtx = document.getElementById("sharedTreeChart").getContext("2d");
+    const creationTimeCtx = document.getElementById("creationTimeChart").getContext("2d");
+    const creationMemoryCtx = document.getElementById("creationMemoryChart").getContext("2d");
+    const updateTimeCtx = document.getElementById("updateTimeChart").getContext("2d");
+    const updateMemoryCtx = document.getElementById("updateMemoryChart").getContext("2d");
+    const removeTimeCtx = document.getElementById("removeTimeChart").getContext("2d");
+    const removeMemoryCtx = document.getElementById("removeMemoryChart").getContext("2d");
 
-    sharedMatrixChart = new Chart(matrixCtx, {
+    // Creation Time Chart
+    creationTimeChart = new Chart(creationTimeCtx, {
         type: "line",
         data: {
             labels: [],
             datasets: [
                 {
-                    label: "Average Time to Set Cells (ms)",
+                    label: "SharedMatrix",
                     data: [],
                     borderColor: "rgba(75, 192, 192, 1)",
                     backgroundColor: "rgba(75, 192, 192, 0.2)",
                     borderWidth: 2,
-                    fill: true,
+                    fill: false,
                 },
                 {
-                    label: "Memory Usage Delta (MB)",
+                    label: "SharedTree",
                     data: [],
-                    borderColor: "rgba(255, 159, 64, 1)",
-                    backgroundColor: "rgba(255, 159, 64, 0.2)",
+                    borderColor: "rgba(153, 102, 255, 1)",
+                    backgroundColor: "rgba(153, 102, 255, 0.2)",
                     borderWidth: 2,
-                    fill: true,
-                    yAxisID: "y2",
+                    fill: false,
                 },
             ],
         },
@@ -321,44 +369,82 @@ function initializeCharts() {
                     title: {
                         display: true,
                         text: "Average Time (ms)",
-                    },
-                },
-                y2: {
-                    position: "right",
-                    title: {
-                        display: true,
-                        text: "Memory Usage Delta (MB)",
-                    },
-                    grid: {
-                        drawOnChartArea: false, // Prevent grid lines from overlapping
                     },
                 },
             },
         },
     });
 
-    sharedTreeChart = new Chart(treeCtx, {
+    // Creation Memory Chart
+    creationMemoryChart = new Chart(creationMemoryCtx, {
         type: "line",
         data: {
             labels: [],
             datasets: [
                 {
-                    label: "Average Time to Set Cells (ms)",
+                    label: "SharedMatrix",
+                    data: [],
+                    borderColor: "rgba(255, 159, 64, 1)",
+                    backgroundColor: "rgba(255, 159, 64, 0.2)",
+                    borderWidth: 2,
+                    fill: false,
+                },
+                {
+                    label: "SharedTree",
+                    data: [],
+                    borderColor: "rgba(255, 99, 132, 1)",
+                    backgroundColor: "rgba(255, 99, 132, 0.2)",
+                    borderWidth: 2,
+                    fill: false,
+                },
+            ],
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: {
+                    display: true,
+                },
+            },
+            scales: {
+                x: {
+                    title: {
+                        display: true,
+                        text: "Number of Cells",
+                    },
+                },
+                y: {
+                    title: {
+                        display: true,
+                        text: "Memory Usage (MB)",
+                    },
+                },
+            },
+        },
+    });
+
+    // Update Time Chart
+    updateTimeChart = new Chart(updateTimeCtx, {
+        type: "line",
+        data: {
+            labels: [],
+            datasets: [
+                {
+                    label: "SharedMatrix",
                     data: [],
                     borderColor: "rgba(75, 192, 192, 1)",
                     backgroundColor: "rgba(75, 192, 192, 0.2)",
                     borderWidth: 2,
-                    fill: true,
+                    fill: false,
                 },
-				{
-					label: "Memory Usage (MB)",
-					data: [], // This should be updated with memory data
-					borderColor: "rgba(255, 159, 64, 1)",
-					backgroundColor: "rgba(255, 159, 64, 0.2)",
-					borderWidth: 2,
-					fill: true,
-					yAxisID: "y2", // Ensure this links to the secondary Y-axis
-				}
+                {
+                    label: "SharedTree",
+                    data: [],
+                    borderColor: "rgba(153, 102, 255, 1)",
+                    backgroundColor: "rgba(153, 102, 255, 0.2)",
+                    borderWidth: 2,
+                    fill: false,
+                },
             ],
         },
         options: {
@@ -381,61 +467,325 @@ function initializeCharts() {
                         text: "Average Time (ms)",
                     },
                 },
-				y2: {
-					position: "right",
-					title: {
-						display: true,
-						text: "Memory Usage (MB)",
-					},
-					grid: {
-						drawOnChartArea: false, // Prevent grid lines from overlapping
-					},
-				},
+            },
+        },
+    });
+
+    // Update Memory Chart
+    updateMemoryChart = new Chart(updateMemoryCtx, {
+        type: "line",
+        data: {
+            labels: [],
+            datasets: [
+                {
+                    label: "SharedMatrix",
+                    data: [],
+                    borderColor: "rgba(255, 159, 64, 1)",
+                    backgroundColor: "rgba(255, 159, 64, 0.2)",
+                    borderWidth: 2,
+                    fill: false,
+                },
+                {
+                    label: "SharedTree",
+                    data: [],
+                    borderColor: "rgba(255, 99, 132, 1)",
+                    backgroundColor: "rgba(255, 99, 132, 0.2)",
+                    borderWidth: 2,
+                    fill: false,
+                },
+            ],
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: {
+                    display: true,
+                },
+            },
+            scales: {
+                x: {
+                    title: {
+                        display: true,
+                        text: "Number of Cells",
+                    },
+                },
+                y: {
+                    title: {
+                        display: true,
+                        text: "Memory Usage (MB)",
+                    },
+                },
+            },
+        },
+    });
+
+    // Remove Time Chart
+    removeTimeChart = new Chart(removeTimeCtx, {
+        type: "line",
+        data: {
+            labels: [],
+            datasets: [
+                {
+                    label: "SharedMatrix",
+                    data: [],
+                    borderColor: "rgba(75, 192, 192, 1)",
+                    backgroundColor: "rgba(75, 192, 192, 0.2)",
+                    borderWidth: 2,
+                    fill: false,
+                },
+                {
+                    label: "SharedTree",
+                    data: [],
+                    borderColor: "rgba(153, 102, 255, 1)",
+                    backgroundColor: "rgba(153, 102, 255, 0.2)",
+                    borderWidth: 2,
+                    fill: false,
+                },
+            ],
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: {
+                    display: true,
+                },
+            },
+            scales: {
+                x: {
+                    title: {
+                        display: true,
+                        text: "Number of Cells",
+                    },
+                },
+                y: {
+                    title: {
+                        display: true,
+                        text: "Average Time (ms)",
+                    },
+                },
+            },
+        },
+    });
+
+    // Remove Memory Chart
+    removeMemoryChart = new Chart(removeMemoryCtx, {
+        type: "line",
+        data: {
+            labels: [],
+            datasets: [
+                {
+                    label: "SharedMatrix",
+                    data: [],
+                    borderColor: "rgba(255, 159, 64, 1)",
+                    backgroundColor: "rgba(255, 159, 64, 0.2)",
+                    borderWidth: 2,
+                    fill: false,
+                },
+                {
+                    label: "SharedTree",
+                    data: [],
+                    borderColor: "rgba(255, 99, 132, 1)",
+                    backgroundColor: "rgba(255, 99, 132, 0.2)",
+                    borderWidth: 2,
+                    fill: false,
+                },
+            ],
+        },
+        options: {
+            responsive: true,
+            plugins: {
+                legend: {
+                    display: true,
+                },
+            },
+            scales: {
+                x: {
+                    title: {
+                        display: true,
+                        text: "Number of Cells",
+                    },
+                },
+                y: {
+                    title: {
+                        display: true,
+                        text: "Memory Usage (MB)",
+                    },
+                },
             },
         },
     });
 }
 
-// Update the chart with new data
-function updateChart(chart, dataStore, numCells, timeTaken, memoryUsed) {
-    // Group data by the number of cells
-    if (!dataStore[numCells]) {
-        dataStore[numCells] = { times: [], memory: [] };
+/**
+ * Update the time and memory charts with new data from performance tests
+ * @param {Chart} timeChart - Chart.js instance for displaying time performance data (line chart showing execution time vs number of cells)
+ * @param {Chart} memoryChart - Chart.js instance for displaying memory usage data (line chart showing memory consumption vs number of cells)
+ * @param {Object} operationData - Data structure storing accumulated performance metrics, organized by DDS type and cell count: { sharedMatrix: { [numCells]: { times: [], memory: [] } }, sharedTree: { [numCells]: { times: [], memory: [] } } }
+ * @param {string} ddsType - Type of Distributed Data Structure being tested, either "sharedMatrix" or "sharedTree"
+ * @param {number} numCells - Total number of cells processed in this operation (rows × columns)
+ * @param {number} timeTaken - Execution time in milliseconds for the operation (create/update/remove)
+ * @param {number|null} memoryUsed - Memory usage in megabytes after the operation, or null if memory measurement is unavailable
+ */
+function updateSeparateCharts(timeChart, memoryChart, operationData, ddsType, numCells, timeTaken, memoryUsed) {
+    // Group data by the number of cells for the specific DDS type
+    if (!operationData[ddsType][numCells]) {
+        operationData[ddsType][numCells] = { times: [], memory: [] };
     }
-    dataStore[numCells].times.push(timeTaken);
+    operationData[ddsType][numCells].times.push(timeTaken);
     if (memoryUsed !== null && memoryUsed !== undefined) {
-        console.log(`Adding memory data: ${memoryUsed} MB`);
-        dataStore[numCells].memory.push(memoryUsed);
+        console.log(`Adding memory data for ${ddsType}: ${memoryUsed} MB`);
+        operationData[ddsType][numCells].memory.push(memoryUsed);
     } else {
-        console.log(`No memory data available for ${numCells} cells`);
+        console.log(`No memory data available for ${ddsType} with ${numCells} cells`);
     }
 
-    console.log(`Updating chart for ${numCells} cells:`);
+    console.log(`Updating separate charts for ${ddsType} with ${numCells} cells:`);
     console.log(`Time taken: ${timeTaken} ms`);
     console.log(`Memory used: ${memoryUsed} MB`);
 
-    // Calculate the average time and memory for each group
-    const labels = Object.keys(dataStore).map(Number).sort((a, b) => a - b);
-    const averages = labels.map((cells) => {
-        const times = dataStore[cells].times;
-        return times.reduce((sum, time) => sum + time, 0) / times.length;
+    // Get all unique cell counts from both DDS types
+    const allCellCounts = new Set([
+        ...Object.keys(operationData.sharedMatrix).map(Number),
+        ...Object.keys(operationData.sharedTree).map(Number)
+    ]);
+    const labels = Array.from(allCellCounts).sort((a, b) => a - b);
+
+    // Calculate averages for SharedMatrix
+    const matrixTimeAverages = labels.map((cells) => {
+        const data = operationData.sharedMatrix[cells];
+        if (data && data.times.length > 0) {
+            return data.times.reduce((sum, time) => sum + time, 0) / data.times.length;
+        }
+        return null;
     });
-    const memoryAverages = labels.map((cells) => {
-        const memory = dataStore[cells].memory;
-        return memory.length > 0
-            ? memory.reduce((sum, mem) => sum + mem, 0) / memory.length
-            : 0; // Default to 0 if the memory array is empty
+
+    const matrixMemoryAverages = labels.map((cells) => {
+        const data = operationData.sharedMatrix[cells];
+        if (data && data.memory.length > 0) {
+            return data.memory.reduce((sum, mem) => sum + mem, 0) / data.memory.length;
+        }
+        return null;
+    });
+
+    // Calculate averages for SharedTree
+    const treeTimeAverages = labels.map((cells) => {
+        const data = operationData.sharedTree[cells];
+        if (data && data.times.length > 0) {
+            return data.times.reduce((sum, time) => sum + time, 0) / data.times.length;
+        }
+        return null;
+    });
+
+    const treeMemoryAverages = labels.map((cells) => {
+        const data = operationData.sharedTree[cells];
+        if (data && data.memory.length > 0) {
+            return data.memory.reduce((sum, mem) => sum + mem, 0) / data.memory.length;
+        }
+        return null;
     });
 
     console.log(`Labels: ${labels}`);
-    console.log(`Time averages: ${averages}`);
-    console.log(`Memory averages: ${memoryAverages}`);
+    console.log(`SharedMatrix time averages: ${matrixTimeAverages}`);
+    console.log(`SharedMatrix memory averages: ${matrixMemoryAverages}`);
+    console.log(`SharedTree time averages: ${treeTimeAverages}`);
+    console.log(`SharedTree memory averages: ${treeMemoryAverages}`);
+
+    // Update the time chart
+    timeChart.data.labels = labels;
+    timeChart.data.datasets[0].data = matrixTimeAverages; // SharedMatrix time
+    timeChart.data.datasets[1].data = treeTimeAverages; // SharedTree time
+    timeChart.update("none");
+
+    // Update the memory chart
+    memoryChart.data.labels = labels;
+    memoryChart.data.datasets[0].data = matrixMemoryAverages; // SharedMatrix memory
+    memoryChart.data.datasets[1].data = treeMemoryAverages; // SharedTree memory
+    memoryChart.update("none");
+}
+
+// Function to remove the SharedMatrix
+async function removeSharedMatrix(sharedMatrix) {
+    // Capture the number of cells before removal
+    const cellCount = sharedMatrix.rowCount * sharedMatrix.colCount;
+    
+    await gc();
+    // Measure memory before the operation
+    const memoryBefore = performance.memory ? performance.memory.usedJSHeapSize : null;
+    // Measure time before operation
+    const start = performance.now();
+
+    // Operation
+    if (sharedMatrix) { 
+        await sharedMatrix.removeRows(0, sharedMatrix.rowCount);
+        await sharedMatrix.removeCols(0, sharedMatrix.colCount);
+    }
+
+    // Measure time after operation
+    const end = performance.now();
+    const timeTaken = end - start;
+
+    // Measure memory after the operation
+    const memoryAfter = performance.memory ? performance.memory.usedJSHeapSize : null;
+    const memoryMB = memoryAfter ? memoryAfter / 1024 / 1024 : null;
+    if (memoryBefore && memoryAfter) {
+        const memoryDelta = (memoryAfter - memoryBefore) / 1024 / 1024;
+        console.log("Memory delta: ", memoryDelta.toFixed(2), "MB");
+    }
+
+    console.log("Total cells removed: ", cellCount);
+    console.log("Removing cells took: ", timeTaken, "ms");
+
+    // Update the remove chart using the captured cell count
+    updateSeparateCharts(removeTimeChart, removeMemoryChart, removeData, "sharedMatrix", cellCount, timeTaken, memoryMB);
+}
+
+// Function to update the SharedMatrix with new CSV data
+async function updateSharedMatrix(sharedMatrix, csvData) {
+    const rowCount = csvData.length;
+    const colCount = csvData[0]?.length || 0;
+
+    console.log("Updating SharedMatrix - Row count: ", rowCount);
+    console.log("Updating SharedMatrix - Col count: ", colCount);
+
+    // Ensure the matrix has the right dimensions (this should already be done in populate)
+    if (sharedMatrix.rowCount !== rowCount) {
+        throw new Error("Row count mismatch during update. Please ensure the matrix is populated correctly before updating.");
+    }
+    if (sharedMatrix.colCount !== colCount) {
+       throw new Error("Column count mismatch during update. Please ensure the matrix is populated correctly before updating.");
+    }
+
+    await gc();
+    // Measure memory before the operation
+    const memoryBefore = performance.memory ? performance.memory.usedJSHeapSize : null;
+    const start = performance.now();
+
+    // Operation
+	for (let row = 0; row < rowCount; row++) {
+		for (let col = 0; col < colCount; col++) {
+            // Ensure cell is a string and clean any control characters
+            const cleanCell = String(csvData[row][col] || "").replace(/[\x00-\x1F\x7F]/g, '');
+			await sharedMatrix.setCell(row, col, cleanCell + "_updated"); // Add suffix to show it's updated
+		}
+	}
+
+    // Measure time after operation
+    const end = performance.now();
+    const timeTaken = end - start;
+
+    // Measure memory after the operation
+    const memoryAfter = performance.memory ? performance.memory.usedJSHeapSize : null;
+    const memoryMB = memoryAfter ? memoryAfter / 1024 / 1024 : null;
+
+    console.log("Total cells updated: ", sharedMatrix.rowCount * sharedMatrix.colCount);
+    console.log("Updating cells took: ", timeTaken, "ms");
+    if (memoryBefore && memoryAfter) {
+        const memoryDelta = (memoryAfter - memoryBefore) / 1024 / 1024;
+        console.log("Memory delta: ", memoryDelta.toFixed(2), "MB");
+    }
 
     // Update the chart
-    chart.data.labels = labels;
-    chart.data.datasets[0].data = averages; // Time dataset
-    chart.data.datasets[1].data = memoryAverages; // Memory dataset
-    chart.update("none");
+    updateSeparateCharts(updateTimeChart, updateMemoryChart, updateData, "sharedMatrix", ((rowCount) * colCount), timeTaken, memoryMB);
 }
 
 // Function to populate the SharedMatrix with CSV data
@@ -445,68 +795,196 @@ async function populateSharedMatrix(sharedMatrix, csvData) {
 
     console.log("Row count: ", rowCount);
     console.log("Col count: ", colCount);
-
-    // Resize the SharedMatrix
+    
+    // Clear the old SharedMatrix
     if (sharedMatrix.rowCount > 0) {
         sharedMatrix.removeRows(0, sharedMatrix.rowCount);
     }
     if (sharedMatrix.colCount > 0) {
         sharedMatrix.removeCols(0, sharedMatrix.colCount);
     }
-	window.gc && window.gc();
-	await new Promise((resolve) => setTimeout(resolve, 1000));
 
+    await gc();
+    // Measure memory before the operation
+    const memoryBefore = performance.memory ? performance.memory.usedJSHeapSize : null;
+    const start = performance.now();
+    
+    // Operation
     await sharedMatrix.insertRows(0, rowCount);
     await sharedMatrix.insertCols(0, colCount);
-
-    // Flatten the 2D array into a 1D array
-    const flattenedData = csvData.flat();
-
-    // Populate the SharedMatrix with the entire dataset
-    console.log("Setting total cells: ", flattenedData.length);
-    const start = performance.now();
-	if(USE_SET_CELLS) {
-    	await sharedMatrix.setCells(0, 0, colCount, flattenedData);
-	} else {
-		for (let row = 0; row < rowCount; row++) {
-			for (let col = 0; col < colCount; col++) {
-				await sharedMatrix.setCell(row, col, csvData[row][col]);
-			}
+    for (let row = 0; row < rowCount; row++) {
+		for (let col = 0; col < colCount; col++) {
+            // Ensure cell is a string and clean any control characters
+            const cleanCell = String(csvData[row][col] || "").replace(/[\x00-\x1F\x7F]/g, '');
+			await sharedMatrix.setCell(row, col, cleanCell); // Add suffix to show it's updated
 		}
 	}
+
+    // Measure time after operation
     const end = performance.now();
     const timeTaken = end - start;
 
+    // Measure memory after the operation
+    const memoryAfter = performance.memory ? performance.memory.usedJSHeapSize : null;
+    const memoryMB = memoryAfter ? memoryAfter / 1024 / 1024 : null;
+
     console.log("Total cells set: ", sharedMatrix.rowCount * sharedMatrix.colCount);
     console.log("Setting cells took: ", timeTaken, "ms");
+    if (memoryBefore && memoryAfter) {
+        const memoryDelta = (memoryAfter - memoryBefore) / 1024 / 1024;
+        console.log("Memory delta: ", memoryDelta.toFixed(2), "MB");
+    }
 
     // Update the chart
-    updateChart(sharedMatrixChart, sharedMatrixData, ((rowCount) * colCount), timeTaken);
+    updateSeparateCharts(creationTimeChart, creationMemoryChart, creationData, "sharedMatrix", ((rowCount) * colCount), timeTaken, memoryMB);
+}
+
+async function removeSharedTree(sharedTreeView) {
+    const treeTable = sharedTreeView.root;
+    const rowCount = treeTable.rows.length;
+    const colCount = treeTable.columns.length;
+    const cellCount = rowCount * colCount;
+
+    const { start, memoryBefore } = await initializePerformanceMeasurement();
+
+    // operation
+    for (let i = 0; i < rowCount; i++) {
+        const row = treeTable.rows[0];
+        treeTable.removeRow(row);
+    }
+
+    for (let j = 0; j < colCount; j++) {
+        const column = treeTable.columns[0];
+        treeTable.removeColumn(column);
+    }
+
+    // Measure time after operation
+    const end = performance.now();
+    const timeTaken = end - start;
+
+    // Measure memory after the operation
+    const memoryAfter = performance.memory ? performance.memory.usedJSHeapSize : null;
+    const memoryMB = memoryAfter ? memoryAfter / 1024 / 1024 : null;
+
+    if (memoryBefore && memoryAfter) {
+        const memoryDelta = (memoryAfter - memoryBefore) / 1024 / 1024;
+        console.log("Memory delta: ", memoryDelta.toFixed(2), "MB");
+    }
+
+    // Update the remove chart using the captured cell count
+    updateSeparateCharts(removeTimeChart, removeMemoryChart, removeData, "sharedTree", cellCount, timeTaken, memoryMB);
+}
+
+async function updateSharedTree(sharedTreeView, csvData) {
+    console.log("Updating SharedTree with new data");
+    const rowCount = csvData.length;
+    const colCount = csvData[0]?.length || 0;
+    
+    // Check schema compatibility first
+    if (sharedTreeView.compatibility.canView === false) {
+        console.log("SharedTree is out of schema, cannot update");
+        return;
+    }
+    
+    // Get the existing tree data
+    const treeTable = sharedTreeView.root;
+    const { start, memoryBefore } = await initializePerformanceMeasurement();
+    
+    for (let i = 0; i < rowCount; i++) {
+        const row = treeTable.rows[i];
+		for (let j = 0; j < colCount; j++) {
+            const column = treeTable.columns[j];
+			treeTable.setCell({
+				key: {
+					column,
+					row,
+				},
+				cell: String(csvData[i][j] || "").replace(/[\x00-\x1F\x7F]/g, '') + "_updated", // Add suffix to show it's updated
+			});
+		}
+	}
+    
+    const end = performance.now();
+    const timeTaken = end - start;
+    console.log("Updating SharedTree took:", timeTaken, "ms");
+
+    // Measure memory after the operation
+    const memoryAfter = performance.memory ? performance.memory.usedJSHeapSize : null;
+    const memoryMB = memoryAfter ? memoryAfter / 1024 / 1024 : null;
+
+    if (memoryBefore && memoryAfter) {
+        const memoryDelta = (memoryAfter - memoryBefore) / 1024 / 1024;
+        console.log("Memory delta: ", memoryDelta.toFixed(2), "MB");
+    }
+
+    // Calculate the number of cells updated
+    const cellsUpdated = treeTable.rows.length * treeTable.columns.length;
+
+    // Update the SharedTree chart
+    updateSeparateCharts(updateTimeChart, updateMemoryChart, updateData, "sharedTree", cellsUpdated, timeTaken, memoryMB);
 }
 
 async function populateSharedTree(sharedTreeView, csvData) {
     console.log("Populating SharedTree with CSV data");
+    const rowCount = csvData.length;
+    const colCount = csvData[0]?.length || 0;
+ 
+    // Clear existing data first
+    sharedTreeView.root = Table.empty();
+    const treeTable = sharedTreeView.root;
 
-    // Clear the existing tree by resetting the rows array
-    const rootNode = sharedTreeView.root;
-    rootNode.rows = []; // Reset the rows array to clear the tree
-	window.gc && window.gc();
-	await new Promise((resolve) => setTimeout(resolve, 1000));
+    const { start, memoryBefore } = await initializePerformanceMeasurement();
+    
+    try {
+        for (let j = 0; j < colCount; j++) {
+            const column = new Column({});
+            treeTable.insertColumn({ index: j, column });
+        }
+        console.log("Columns inserted: ", treeTable.columns.length);
 
-    // Populate the tree with rows and columns
-    const rows = csvData.map((row) => {
-        return row.map((cell) => cell); // Each cell is a string
-    });
+        for (let i = 0; i < rowCount; i++) {
+            treeTable.insertRow({ index: i, row: new Row({ cells: {} }) });
+        }
+        console.log("Rows inserted: ", treeTable.rows.length);
+        
+    } catch (e) {
+        console.error("Error populating SharedTree:", e);
+    }
+    
+    // Populate cells with data after structure is created
+    for (let i = 0; i < rowCount; i++) {
+        const row = treeTable.rows[i];
+		for (let j = 0; j < colCount; j++) {
+            const column = treeTable.columns[j];
+			treeTable.setCell({
+				key: {
+					column,
+					row,
+				},
+				cell: String(csvData[i][j] || "").replace(/[\x00-\x1F\x7F]/g, ''),
+			});
+		}
+	}
 
-    const start = performance.now();
-    rootNode.rows = rows; // Assign the new rows to the root node
+    // Measure time after operation
     const end = performance.now();
     const timeTaken = end - start;
 
+    // Measure memory after the operation
+    const memoryAfter = performance.memory ? performance.memory.usedJSHeapSize : null;
+    const memoryMB = memoryAfter ? memoryAfter / 1024 / 1024 : null;
+
     console.log("Populating SharedTree took:", timeTaken, "ms");
+    if (memoryBefore && memoryAfter) {
+        const memoryDelta = (memoryAfter - memoryBefore) / 1024 / 1024;
+        console.log("Memory delta: ", memoryDelta.toFixed(2), "MB");
+    }
+
+    // Calculate total cells
+    const totalCells = csvData.length * (csvData[0]?.length || 0);
 
     // Update the SharedTree chart
-    updateChart(sharedTreeChart, sharedTreeData, ((rows.length) * (rows[0]?.length) || 0), timeTaken);
+    updateSeparateCharts(creationTimeChart, creationMemoryChart, creationData, "sharedTree", totalCells, timeTaken, memoryMB);
 }
 
 // Initialize the charts when the app starts
@@ -514,6 +992,26 @@ initializeCharts();
 
 const fullPerformanceTestButton = document.getElementById("fullPerformanceTest");
 const runningIcon = document.getElementById("runningIcon");
+
+async function gc() {
+    window.gc && window.gc();
+	await new Promise((resolve) => setTimeout(resolve, 1000));
+}
+
+/**
+ * Helper function to initialize performance measurement baseline
+ * Ensures clean memory state and captures initial timing/memory metrics
+ * @returns {Object} Object containing start time and initial memory measurement
+ */
+async function initializePerformanceMeasurement() {
+    await gc(); // Force garbage collection for clean memory baseline
+    // Measure memory before the operation
+    const memoryBefore = performance.memory ? performance.memory.usedJSHeapSize : null;
+    // Measure time before operation
+    const start = performance.now();
+    
+    return { start, memoryBefore };
+}
 
 async function runFullPerformanceTest() {
     console.log("Starting full performance test...");
@@ -523,32 +1021,23 @@ async function runFullPerformanceTest() {
     const testFiles = await fetchTestFiles(testFilesFolder); // Fetch the list of test files
     const iterations = FULL_TEST_ITERATIONS; // Number of times to test each file with each DDS
 
-	for (let i = 0; i < iterations; i++) {
-		console.log(`Iteration ${i + 1} of ${iterations}`);
+    for (let i = 0; i < iterations; i++) {
+        console.log(`Iteration ${i + 1} of ${iterations}`);
 		for (const fileName of testFiles) {
 			console.log(`Testing file: ${fileName}`);
        		const fileContent = await fetchFileContent(`${testFilesFolder}/${fileName}`);
 
-            await testDDS("SharedTree", fileContent);
-
-			// wait a second to make sure chart can update
-			window.gc && window.gc();
-			await new Promise((resolve) => setTimeout(resolve, 1000));
+            await operateDDS("SharedTree", fileContent);
+            await gc();
         }
-		window.gc && window.gc();
-		await new Promise((resolve) => setTimeout(resolve, 5000));
+
 		for (const fileName of testFiles) {
 			console.log(`Testing file: ${fileName}`);
        		const fileContent = await fetchFileContent(`${testFilesFolder}/${fileName}`);
 
-            await testDDS("SharedMatrix", fileContent);
-
-			// wait a second to make sure chart can update
-			window.gc && window.gc();
-			await new Promise((resolve) => setTimeout(resolve, 1000));
+            await operateDDS("SharedMatrix", fileContent);
+			await gc();
         }
-		window.gc && window.gc();
-		await new Promise((resolve) => setTimeout(resolve, 5000));
     }
 
     runningIcon.style.display = "none"; // Hide the running icon
@@ -563,13 +1052,15 @@ async function fetchTestFiles(folderPath) {
 		"customers-1000.csv", 
 		"customers-5000.csv", 
 		"customers-10000.csv",
-		"customers-20000.csv", 
-		"customers-30000.csv",
-		"customers-40000.csv",
-		"customers-50000.csv",
-		"customers-60000.csv",
-		"customers-70000.csv",
-		"customers-80000.csv",
+        // app crashes with larger files, mainly due to sharedTree performance/memory issues
+        // Uncomment these lines to test larger files if needed
+		// "customers-20000.csv", 
+		// "customers-30000.csv",
+		//"customers-40000.csv",
+		//"customers-50000.csv",
+		// "customers-60000.csv",
+		// "customers-70000.csv",
+		// "customers-80000.csv",
 		// "customers-90000.csv",
 		// "customers-100000.csv"
 	];
@@ -584,50 +1075,88 @@ async function fetchFileContent(filePath) {
     return await response.text();
 }
 
-// Test a specific DDS with the given file content
-async function testDDS(ddsType, fileContent) {
+// Create, update, remove a specific DDS with the given file content
+async function operateDDS(ddsType, fileContent) {
     const csvData = parseCSV(fileContent); // Parse the CSV content into an array
-
-    // Measure memory before the operation
-    const memoryBefore = performance.memory ? performance.memory.usedJSHeapSize : null;
-
-    let timeTaken;
+    console.log(`Operating on ${ddsType} with CSV data`);
+    
     if (ddsType === "SharedMatrix") {
-        const start = performance.now();
         await populateSharedMatrix(sharedMatrix, csvData);
-        const end = performance.now();
-        timeTaken = end - start;
-        console.log(`SharedMatrix test completed in ${timeTaken} ms`);
+        await updateSharedMatrix(sharedMatrix, csvData);
+        await removeSharedMatrix(sharedMatrix);
     } else if (ddsType === "SharedTree") {
-        const start = performance.now();
         await populateSharedTree(sharedTreeView, csvData);
-        const end = performance.now();
-        timeTaken = end - start;
-        console.log(`SharedTree test completed in ${timeTaken} ms`);
+        await updateSharedTree(sharedTreeView, csvData);
+        await removeSharedTree(sharedTreeView);
     }
 
-    // Measure memory after the operation
-    const memoryAfter = performance.memory ? performance.memory.usedJSHeapSize : null;
-
-    let memoryUsed = null;
-    if (memoryBefore !== null && memoryAfter !== null) {
-        memoryUsed = (memoryAfter - memoryBefore) / 1024 / 1024; // Convert to MB
-        console.log(`${ddsType} memory usage: ${memoryUsed.toFixed(2)} MB`);
-    } else {
-        console.log(`${ddsType} memory usage: Memory API not supported`);
-    }
-
-    // Update the chart
-    if (ddsType === "SharedMatrix") {
-        updateChart(sharedMatrixChart, sharedMatrixData, csvData.length * csvData[0].length, timeTaken, (memoryAfter / 1024 / 1024));
-    } else if (ddsType === "SharedTree") {
-        updateChart(sharedTreeChart, sharedTreeData, csvData.length * csvData[0].length, timeTaken, (memoryAfter / 1024 / 1024));
-    }
+    console.log(`${ddsType} operations completed`);
 }
 
 // Parse CSV content into a 2D array
 function parseCSV(content) {
-    const rows = content.split("\n").map((row) => row.split(","));
+    console.log("Starting CSV parsing...");
+    
+    // Clean the content by removing only specific control characters but keep newlines
+    const cleanedContent = content.replace(/[\x00-\x09\x0B-\x1F\x7F]/g, '');
+    
+    const rows = [];
+    let currentRow = [];
+    let currentCell = '';
+    let insideQuotes = false;
+    
+    for (let i = 0; i < cleanedContent.length; i++) {
+        const char = cleanedContent[i];
+        const nextChar = cleanedContent[i + 1];
+        
+        if (char === '"') {
+            if (insideQuotes && nextChar === '"') {
+                // Handle escaped quotes ("") - add one quote to cell content
+                currentCell += '"';
+                i++; // Skip the next quote
+            } else {
+                // Toggle quote state - don't add quote to cell content
+                insideQuotes = !insideQuotes;
+            }
+        } else if (char === ',' && !insideQuotes) {
+            // End of field - comma outside quotes
+            currentRow.push(currentCell.trim());
+            currentCell = '';
+        } else if (char === '\n' && !insideQuotes) {
+            // End of row - newline outside quotes
+            currentRow.push(currentCell.trim());
+            if (currentRow.length > 0 && currentRow.some(cell => cell !== '')) {
+                rows.push(currentRow);
+            }
+            currentRow = [];
+            currentCell = '';
+        } else {
+            // Regular character - add to current cell
+            currentCell += char;
+        }
+    }
+    
+    // Add the last cell and row if there's content
+    if (currentCell || currentRow.length > 0) {
+        currentRow.push(currentCell.trim());
+        if (currentRow.length > 0 && currentRow.some(cell => cell !== '')) {
+            rows.push(currentRow);
+        }
+    }
+    
+    // Ensure consistent column count
+    if (rows.length > 0) {
+        const maxColCount = Math.max(...rows.map(row => row.length));
+        const normalizedRows = rows.map(row => {
+            while (row.length < maxColCount) {
+                row.push(''); // Add empty strings for missing cells
+            }
+            return row;
+        });
+        
+        return normalizedRows;
+    }
+    
     return rows;
 }
 
